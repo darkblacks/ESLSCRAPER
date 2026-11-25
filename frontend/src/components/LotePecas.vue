@@ -28,18 +28,21 @@ const searchWarehouses = async (t) => (await api.warehouses(t)).map((w) => ({ id
 const searchEmployees = async (t) => (await api.employees(t)).map((e) => ({ id: e.id, text: e.nome, sub: e.filial }));
 
 function montarLinha(p) {
+  const placa = p.veiculoSugerido?.placa || '';
+  const unica = osAbertasDe(p, placa);
   return {
-    placa: p.veiculoSugerido?.placa || '',
-    osSel: null,
+    placa,
+    osSel: unica.length === 1 ? osRef(unica[0]) : null, // 1 OS aberta para a placa → já vem selecionada
+    osManual: false, // true depois de "trocar": não re-seleciona sozinho até a placa mudar
     destino: null, // null = padrão do lote
     comentarioNf: '', // texto livre desta NF, vai no comentário da entrada depois do padrão
     fornecedorSel: p.fornecedor ? { id: p.fornecedor.id, text: p.fornecedor.nome } : null,
     filialNf: p.filial || '',
-    itens: p.itens.map((it) => reactive({
+    itens: (p.itens || []).map((it) => reactive({
       ...it,
       acao: it.situacao === 'certo' ? 'existente' : it.situacao === 'nenhum' ? 'cadastrar' : null, // null = dúvida
       produtoSel: it.produto ? { id: it.produto.id, text: it.produto.text } : null,
-      opcoes: it.sugestoes.map((s) => ({ id: s.id, text: s.text, sub: `score ${s.score}` })),
+      opcoes: (it.sugestoes || []).map((s) => ({ id: s.id, text: s.text, sub: `score ${s.score}` })),
       novo: reactive({ ...it.novo, setItem: null, group: null }),
     })),
   };
@@ -54,11 +57,41 @@ const acao = (it) => it.acao || (pad.duvida === 'cadastrar' ? 'cadastrar' : null
 const novoOk = (it) => it.novo.code && it.novo.name && it.novo.unitId && (it.novo.setItem || pad.setItem) && (it.novo.group || pad.grupo);
 
 /** OS abertas da placa desta nota (vindas da leitura do XML). Mais de uma → você escolhe antes de lançar. */
-const osAbertas = (l) => (l.p?.osSugeridas || []).filter((o) => (!o.status || o.status === 'pending') && placaFmt(o.placa) === placaFmt(l.placa));
+function osAbertasDe(p, placa) {
+  const pl = placaFmt(placa);
+  if (!pl) return [];
+  return (p?.osSugeridas || []).filter((o) => o && (!o.status || o.status === 'pending') && placaFmt(o.placa) === pl);
+}
+const osAbertas = (l) => osAbertasDe(l.p, l.placa);
+const osRef = (o) => ({ id: o.id, text: `OS ${o.numero}` });
+/** Exatamente 1 OS aberta para a placa e nada escolhido → seleciona essa OS. */
+function autoOs(l) {
+  if (l.osSel || l.osManual) return;
+  const a = osAbertas(l);
+  if (a.length === 1) l.osSel = osRef(a[0]);
+}
 const escolherOs = (l, id) => {
   const o = osAbertas(l).find((x) => String(x.id) === String(id));
-  l.osSel = o ? { id: o.id, text: `OS ${o.numero}` } : null;
+  l.osSel = o ? osRef(o) : null;
 };
+/** Placa digitada/editada: descarta a OS anterior e re-seleciona se houver só 1 aberta. */
+function mudarPlaca(l, v) {
+  l.placa = v;
+  l.osSel = null;
+  l.osManual = false;
+  autoOs(l);
+}
+/** "trocar": libera a placa e a escolha da OS (com 1 OS aberta ela aparece no select para confirmar). */
+function trocarOs(l) {
+  l.osSel = null;
+  l.osManual = true;
+}
+/** "OS específica" (detalhes): qualquer OS sugerida da nota; vazio = automática pela placa. */
+function osEspecifica(l, id) {
+  const o = (l.p?.osSugeridas || []).find((x) => String(x.id) === String(id));
+  l.osSel = o ? osRef(o) : null;
+  l.osManual = !o;
+}
 
 function pendencias(l) {
   if (!l.p) return [];
@@ -189,8 +222,8 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
         <tbody>
           <template v-for="l in linhas" :key="l.ref">
             <tr>
-              <td><b>{{ l.p?.nf.numero || l.arquivo }}</b><small class="muted block">{{ l.p?.date }}</small></td>
-              <td>{{ l.fornecedorSel?.text || l.p?.nf.emitente.nome }}<small v-if="l.p && !l.p.fornecedor" class="msg block">não cadastrado</small>
+              <td><b>{{ l.p?.nf?.numero || l.arquivo }}</b><small class="muted block">{{ l.p?.date }}</small></td>
+              <td>{{ l.fornecedorSel?.text || l.p?.nf?.emitente?.nome }}<small v-if="l.p && !l.p.fornecedor" class="msg block">não cadastrado</small>
                 <template v-if="l.p && !['lançada', 'na fila', 'lançando'].includes(l.estado)">
                   <textarea v-model="l.comentarioNf" maxlength="500" rows="1" class="coment" placeholder="comentário desta NF (opcional)"></textarea>
                   <small v-if="l.comentarioNf" class="muted block">{{ l.comentarioNf.length }}/500</small>
@@ -205,12 +238,13 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                     <option value="os">aplicar em OS</option><option value="estoque">só estoque</option>
                   </select>
                   <template v-if="destino(l) === 'os'">
-                    <input v-if="!l.osSel" v-model="l.placa" placeholder="placa" style="max-width: 110px" />
-                    <select v-if="!l.osSel && osAbertas(l).length > 1" class="block" style="max-width: 170px; margin-top: 4px" @change="escolherOs(l, $event.target.value)">
-                      <option value="">escolha a OS…</option>
+                    <input v-if="!l.osSel" :value="l.placa" @input="mudarPlaca(l, $event.target.value)" placeholder="placa" style="max-width: 110px" />
+                    <select v-if="!l.osSel && (osAbertas(l).length > 1 || (l.osManual && osAbertas(l).length))" class="block" style="max-width: 170px; margin-top: 4px" @change="escolherOs(l, $event.target.value)">
+                      <option value="">{{ osAbertas(l).length > 1 ? 'escolha a OS…' : 'automática pela placa' }}</option>
                       <option v-for="o in osAbertas(l)" :key="o.id" :value="o.id">OS {{ o.numero }}{{ o.data ? ' · ' + o.data : '' }}</option>
                     </select>
-                    <span v-else>{{ l.osSel.text }} <a class="link" @click="l.osSel = null">trocar</a></span>
+                    <span v-else-if="l.osSel" class="block">{{ l.osSel.text }} <a class="link" @click="trocarOs(l)">trocar</a></span>
+                    <small v-else class="muted block">{{ placaFmt(l.placa) ? 'sem OS aberta para esta placa' + (pad.criarOs ? ' — cria nova' : '') : 'informe a placa' }}</small>
                   </template>
                 </template>
                 <span v-else>{{ l.resultado?.somenteEntrada ? 'só estoque' : l.resultado?.osNumero ? 'OS ' + l.resultado.osNumero : destino(l) === 'estoque' ? 'só estoque' : l.placa }}</span>
@@ -222,8 +256,8 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                 <small v-if="resumo(l)" class="block" :class="l.resultado?.ok ? 'okc' : 'msg'"><b>{{ resumo(l) }}</b></small>
                 <small v-if="l.erro && !l.resultado?.itens" class="msg block">{{ l.erro }}</small>
                 <a v-if="l.resultado?.itens && !l.aberta" class="link small" @click="l.aberta = true">ver item por item</a>
-                <small v-if="l.estado === 'bloqueada'" class="msg block">{{ l.p?.duplicidade.motivos.join(' ') }}</small>
-                <small v-if="l.p?.duplicidade.retomavel" class="warnc block">incompleta antes — será retomada</small>
+                <small v-if="l.estado === 'bloqueada'" class="msg block">{{ (l.p?.duplicidade?.motivos || []).join(' ') }}</small>
+                <small v-if="l.p?.duplicidade?.retomavel" class="warnc block">incompleta antes — será retomada</small>
               </td>
               <td><a class="link" @click="l.aberta = !l.aberta">{{ l.aberta ? 'fechar' : 'detalhes' }}</a>
                 <a v-if="!['na fila', 'lançando'].includes(l.estado)" class="link muted" @click="remover(l)"> ✕</a></td>
@@ -236,16 +270,16 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                     <select v-model="l.filialNf"><option value="">usar padrão</option><option v-for="f in filiais" :key="f.id" :value="f.nome">{{ f.nome }}</option></select>
                   </label>
                   <label v-if="destino(l) === 'os'">OS específica
-                    <select @change="l.osSel = $event.target.value ? { id: +$event.target.value, text: 'OS ' + $event.target.selectedOptions[0].dataset.n } : null">
+                    <select :value="l.osSel?.id ?? ''" @change="osEspecifica(l, $event.target.value)">
                       <option value="">automática pela placa</option>
-                      <option v-for="o in l.p.osSugeridas" :key="o.id" :value="o.id" :data-n="o.numero">OS {{ o.numero }} · {{ o.placa }}</option>
+                      <option v-for="o in l.p.osSugeridas || []" :key="o.id" :value="o.id">OS {{ o.numero }} · {{ o.placa }}</option>
                     </select>
                   </label>
                 </div>
                 <table class="items compact">
                   <thead><tr><th>Código</th><th>Descrição</th><th>Qtd</th><th>Unit.</th><th>Peça no ESL</th></tr></thead>
                   <tbody>
-                    <tr v-for="it in l.itens" :key="it.nItem">
+                    <tr v-for="it in l.itens || []" :key="it.nItem">
                       <td>{{ it.cProd }}</td><td>{{ it.descricao }}</td><td>{{ it.quantidade }} {{ it.unidade }}</td><td>{{ fmt(it.valorUnitario) }}<small v-if="it.desconto" class="muted block">desconto do item {{ fmt(it.desconto) }} (vai no cabeçalho)</small></td>
                       <td class="pick-cell">
                         <span class="badge" :class="SIT[it.situacao]">{{ it.situacao === 'certo' ? 'encontrada' : it.situacao === 'duvida' ? 'dúvida' : 'nova' }}</span>
@@ -273,7 +307,7 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                       <tr v-for="it in l.resultado.itens" :key="it.nItem">
                         <td>{{ it.nItem }}</td><td>{{ it.cProd }}</td><td>{{ it.descricao }}</td><td>{{ it.quantidade }} × {{ fmt(it.valorUnitario) }}</td>
                         <td v-for="[k] in ITEM_ETAPAS" :key="k" :class="it[k] ? (it[k].ok ? 'okc' : 'msg') : 'muted'">
-                          {{ it[k] ? (it[k].ok ? '✓ ' : '✗ ') + it[k].msg : '—' }}
+                          {{ it[k] ? (it[k].ok ? '✓ ' : '✗ ') + (it[k].msg || '') : '—' }}
                         </td>
                       </tr>
                     </tbody>

@@ -37,7 +37,7 @@ export function useLote(tipo, previewFn, montarLinha) {
         try {
           const p = await previewFn({ name: f.name, content: await f.text() });
           if (!p.ok) throw new Error(p.error);
-          Object.assign(linha, montarLinha(p), { p, estado: p.duplicidade.bloqueado ? 'bloqueada' : 'conferir' });
+          Object.assign(linha, montarLinha(p), { p, estado: p.duplicidade?.bloqueado ? 'bloqueada' : 'conferir' });
         } catch (e) {
           Object.assign(linha, { estado: 'erro', erro: e.message });
         }
