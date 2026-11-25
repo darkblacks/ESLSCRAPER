@@ -54,6 +54,12 @@ export async function closeSession(id) {
   await s.context.close().catch(() => {});
 }
 
+/** Encerra todas as sessões e o Chromium (SIGTERM do Docker / reinício). */
+export async function shutdown() {
+  for (const id of [...sessions.keys()]) await closeSession(id);
+  if (browser) await browser.close().catch(() => {});
+}
+
 export { BASE };
 
 /** GET JSON no ESL com os cookies da sessão (endpoints de autocomplete etc.). Não usa a página. */

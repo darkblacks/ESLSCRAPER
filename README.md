@@ -185,9 +185,9 @@ Ver `backend/src/targets.js`. Principais:
 
 ## Levar para o servidor
 
-O backend roda em qualquer Linux com Node 20+ (`npx playwright install-deps chromium` instala as libs do
-sistema). Atrás de um proxy (nginx) com HTTPS, coloque a URL do frontend em `CORS_ORIGINS` e use uma
-`API_KEY` forte. Como cada sessão é um Chromium, conte ~150–250 MB de RAM por sessão ativa.
+Produção roda na VPS com Docker Compose (backend + Caddy com HTTPS) — veja **[DEPLOY.md](DEPLOY.md)**.
+API pública: `https://194-61-238-7.sslip.io` · atualização: `sudo /opt/esl-scraper-git/ops/deploy.sh`.
+Como cada sessão é um Chromium, conte ~150–250 MB de RAM por sessão ativa.
 
 ## Próximos passos sugeridos
 

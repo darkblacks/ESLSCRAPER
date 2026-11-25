@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "postinstall": "playwright install chromium"
+    "postinstall": "playwright install chromium",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test:browser": "node test/browser.smoke.js",
+    "test:esl": "node test/browser.smoke.js --esl"
   },
   "dependencies": {
     "cors": "^2.8.5",

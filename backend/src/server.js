@@ -13,13 +13,16 @@ import { previewServico, lancarServico } from './lancamento-servicos.js';
 import { previewPecas, lancarPecas } from './lancamento-pecas.js';
 import { startBatch, getBatch, cancelBatch, getTelas } from './lote.js';
 import * as C from './config.js';
-import { listSessions } from './esl.js';
+import { listSessions, shutdown } from './esl.js';
+import { rateLimit } from './rate-limit.js';
 import { adminPage } from './admin-page.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3333);
 const commitOn = () => C.get().allowCommit; // pode ser ligado/desligado pelo /admin
 const INICIO = Date.now();
+const VERSAO = process.env.GIT_COMMIT || 'dev';
+const BODY_LIMIT = process.env.BODY_LIMIT || '25mb';
 
 if (!C.get().apiKey || C.get().apiKey === 'troque-esta-chave') {
   console.warn('[aviso] Defina API_KEY no .env (ou pelo /admin) antes de expor este backend fora da sua máquina.');
@@ -29,7 +32,19 @@ if (!C.adminConfigurado()) console.warn('[aviso] ADMIN_PASSWORD não definida (m
 app.set('trust proxy', 1); // atrás do Caddy/nginx: IP real do cliente
 // CORS lido a cada requisição: origens alteradas no /admin valem na hora
 app.use(cors({ origin: (origin, cb) => cb(null, C.origemPermitida(origin)), allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Session-Id', 'X-Admin-Password'] }));
-app.use(express.json({ limit: '25mb' })); // lotes de XML
+app.use(express.json({ limit: BODY_LIMIT })); // lotes de XML (o Caddy também limita o tamanho do corpo)
+// corpo grande demais / JSON inválido: responde JSON (o frontend lê data.error)
+app.use((err, _req, res, next) => {
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: `Envio grande demais (limite ${BODY_LIMIT}). Divida os XMLs em lotes menores.`, code: 'too_large' });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON inválido.', code: 'bad_json' });
+  next(err);
+});
+
+// Limitação de requisições por IP (o IP real vem do Caddy via X-Forwarded-For; trust proxy = 1).
+// Geral: protege contra abuso; login/código: evita força bruta e abertura de muitos Chromium.
+const isHealth = (req) => req.path === '/api/health';
+app.use('/api', rateLimit({ janelaMs: 60_000, max: Number(process.env.RATE_LIMIT_PER_MIN || 600), pular: (req) => isHealth(req) }));
+app.use(['/api/auth/login', '/api/auth/code', '/api/auth/code/resend'], rateLimit({ janelaMs: 15 * 60_000, max: Number(process.env.RATE_LIMIT_LOGIN_15MIN || 20), msg: 'Muitas tentativas de login. Aguarde alguns minutos.' }));
 
 // Nunca logar corpo de requisição (tem senha no /login).
 app.use((req, _res, next) => {
@@ -114,7 +129,7 @@ const wrap = (fn) => (req, res) =>
 
 /* --------------------------- endpoints --------------------------- */
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, commitEnabled: commitOn() }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, commitEnabled: commitOn(), versao: VERSAO, uptimeS: Math.round((Date.now() - INICIO) / 1000) }));
 
 app.post('/api/auth/login', wrap(async (req, res) => {
   const { email, password } = req.body || {};
@@ -278,4 +293,21 @@ app.post('/api/insert/batch', requireSession, wrap(async (req, res) => {
 const limpos = LEDGER.limparDeParaSuspeito();
 if (limpos) console.log(`[de-para] ${limpos} associação(ões) suspeita(s) de peça removida(s).`);
 
-app.listen(PORT, () => console.log(`ESL scraper backend em http://localhost:${PORT} (commit ${commitOn() ? 'LIGADO' : 'desligado'})`));
+const server = app.listen(PORT, () => console.log(`ESL scraper backend em http://localhost:${PORT} (versão ${VERSAO}, commit ${commitOn() ? 'LIGADO' : 'desligado'})`));
+// Operações do Playwright podem levar minutos: não deixa o Node cortar a conexão antes do Caddy.
+server.requestTimeout = 0;
+server.headersTimeout = 65_000;
+server.keepAliveTimeout = 61_000;
+
+// Docker manda SIGTERM ao parar/reiniciar: fecha o Chromium e as sessões antes de sair.
+let saindo = false;
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    if (saindo) return;
+    saindo = true;
+    console.log(new Date().toISOString(), `[${sig}] encerrando…`);
+    server.close();
+    await Promise.race([shutdown(), new Promise((ok) => setTimeout(ok, 8000))]);
+    process.exit(0);
+  });
+}

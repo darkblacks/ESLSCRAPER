@@ -1,68 +1,136 @@
-# Subir o ESL Scraper: backend no servidor + site no Netlify
+# Deploy do ESL Scraper — backend na VPS + frontend no Netlify
 
 ```
-Netlify (site)  ──HTTPS──▶  esl-xxx.duckdns.org (Caddy) ──▶ backend (Docker + Chromium) ──▶ ESL Cloud
+Netlify (frontend Vue) ──HTTPS──▶ 194-61-238-7.sslip.io:443 (Caddy, Let's Encrypt)
+                                        │  rede interna do Docker
+                                        ▼
+                                  backend:3333 (Node 20+ · Express · Playwright/Chromium headless)
+                                        │
+                                        ▼
+                                  ESL Cloud (https://transmassa.eslcloud.com.br)
 ```
 
-## 1. Domínio grátis no DuckDNS
+## 1. Servidor (VPS Foxya)
 
-1. Entre em https://www.duckdns.org e faça login (Google ou GitHub).
-2. Em **sub domain**, escolha um nome (ex.: `esl-transmassa`) e clique em **add domain**.
-3. Em **current ip**, coloque o IP público do servidor e clique em **update ip**.
-4. Copie o **token** que aparece no topo da página. Ele vai no `.env` e mantém o IP atualizado sozinho.
+| Item | Valor |
+|---|---|
+| SO | Ubuntu 26.04.1 LTS · 3 vCPU · 3,8 GB RAM + 2 GB swap (`/swapfile`) |
+| IP público | `194.61.238.7` |
+| API pública | `https://194-61-238-7.sslip.io` |
+| Health check | `https://194-61-238-7.sslip.io/api/health` |
+| Admin do servidor | `https://194-61-238-7.sslip.io/admin` (senha `ADMIN_PASSWORD` do `.env`) |
+| Código (git) | `/opt/esl-scraper-git` → github.com/darkblacks/ESLSCRAPER (branch `main`) |
+| Configuração | `/opt/esl-scraper-git/.env` (chmod 600, **fora do git**) |
+| Dados persistentes | `/opt/esl-scraper-git/backend-data/` (dono uid 1001 = `pwuser` do container) |
+| Backups | `/var/backups/esl-scraper/` (diário 03:30 via `esl-backup.timer` + antes de cada deploy; mantém 30) |
+| Cópia antiga | `/opt/esl-scraper-v5/` — idêntica ao commit inicial; **não é usada** |
 
-O endereço do backend fica `https://esl-transmassa.duckdns.org`.
+### Serviços
 
-## 2. Servidor (Linux com Docker)
+| Serviço | Como roda | Portas |
+|---|---|---|
+| `docker` | systemd, habilitado no boot | — |
+| `esl-scraper-backend-1` | Docker, `restart: unless-stopped`, usuário `pwuser` (sem root), `init`, `no-new-privileges`, limite 2,5 GB | `3333` **só na rede interna do Docker** |
+| `esl-scraper-caddy-1` | Docker, `restart: unless-stopped` | `80` (ACME + redirect), `443` tcp/udp |
+| `esl-backup.timer` | systemd | — |
+| Firewall `ufw` | ativo: entrada negada, exceto 22/tcp, 80/tcp, 443/tcp, 443/udp | — |
 
-**Requisitos:**
-- portas **80 e 443** abertas para a internet (o certificado HTTPS é emitido por elas);
-- 2 GB de RAM ou mais.
+O backend volta sozinho se o processo morrer e após reinício do servidor (Docker habilitado no boot +
+`unless-stopped`). Não depende do Claude Code nem da sessão SSH.
+
+### Por que `sslip.io`?
+
+Não há domínio próprio. `194-61-238-7.sslip.io` é um DNS público que sempre responde o IP embutido no nome,
+então o Caddy obtém um certificado Let's Encrypt válido (renovação automática). Se um dia houver domínio
+próprio ou DuckDNS: aponte o DNS para `194.61.238.7`, troque `DOMINIO` no `.env`,
+`docker compose up -d --force-recreate caddy`, atualize `VITE_API_URL` no Netlify e redeploy do site.
+(DuckDNS: preencha `DUCKDNS_*` e suba com `docker compose --profile duckdns up -d`.)
+
+## 2. Variáveis do `.env` (servidor)
+
+Modelo: `deploy.env.example`. Nunca commitar o `.env`.
+
+| Variável | Para quê |
+|---|---|
+| `DOMINIO` | host do certificado HTTPS (hoje `194-61-238-7.sslip.io`) |
+| `ESL_BASE` | `https://transmassa.eslcloud.com.br` |
+| `API_KEY` | chave exigida no header `X-API-Key` (≥16 chars). **Vai no frontend → não é segredo forte.** |
+| `ADMIN_PASSWORD` | senha do `/admin` (≥8 chars). Segredo de verdade. 5 erros → bloqueio de 5 min por IP. |
+| `CORS_ORIGINS` | URL(s) do site no Netlify, separadas por vírgula (aceita `https://*.netlify.app`) |
+| `ALLOW_COMMIT` | `false` = **modo simulação** (nada é gravado no ESL). Pode ser ligado pelo `/admin`. |
+| `SESSION_TTL_MIN` | minutos ociosos até fechar a sessão ESL (padrão 60) |
+| `MAX_UPLOAD` / `BODY_LIMIT` | limite do envio no Caddy (30MB) / no Node (25mb) |
+| `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_LOGIN_15MIN` | limite por IP: geral (600/min) / login+código (20 por 15 min) |
+
+O que for alterado pelo `/admin` (CORS, gravação, TTL, nova chave) fica em `backend-data/config.json` e
+**tem prioridade sobre o `.env`**.
+
+## 3. Netlify (frontend — já publicado, não recriar)
+
+Em **Site configuration › Environment variables**:
+
+| Variável | Valor |
+|---|---|
+| `VITE_API_URL` | `https://194-61-238-7.sslip.io` |
+| `VITE_API_KEY` | o valor de `API_KEY` do `.env` do servidor (`sudo grep ^API_KEY= /opt/esl-scraper-git/.env`) |
+
+Depois: **Deploys › Trigger deploy** (variáveis `VITE_*` entram no build). E libere a URL do site no CORS
+(`CORS_ORIGINS` no `.env` + `docker compose up -d backend`, ou pelo `/admin`).
+
+> `VITE_API_KEY` fica visível no JavaScript do site. A proteção real das operações é o **login no ESL**
+> (toda rota operacional exige `X-Session-Id` de uma sessão logada) + `ADMIN_PASSWORD` + rate limit.
+> Nunca coloque senha do ESL ou `ADMIN_PASSWORD` em variáveis `VITE_*`.
+
+## 4. Operação do dia a dia
 
 ```bash
-# copie a pasta esl-scraper para o servidor, depois:
-cd esl-scraper
-cp deploy.env.example .env
-nano .env          # preencha DOMINIO, DUCKDNS_*, ADMIN_PASSWORD, API_KEY, CORS_ORIGINS
-docker compose up -d --build
-docker compose logs -f backend     # deve aparecer "ESL scraper backend em ..."
+cd /opt/esl-scraper-git
+docker compose ps                                  # status (backend deve estar "healthy")
+docker compose logs -f --tail 200 backend          # logs do backend (método + rota; nunca corpo/senha)
+docker compose logs -f --tail 200 caddy            # logs do HTTPS/proxy (sem cabeçalhos)
+curl -s https://194-61-238-7.sslip.io/api/health   # {"ok":true,"commitEnabled":false,"versao":"<commit>",...}
+docker compose restart backend                     # reinicia o backend (encerra sessões ESL e lotes!)
+docker compose up -d backend                       # aplica mudanças do .env
+sudo ops/backup.sh manual                          # backup na hora
 ```
 
-Para testar, abra `https://SEU-DOMINIO.duckdns.org/api/health` no navegador. A resposta deve ser `{"ok":true,...}`.
-O certificado pode levar 1–2 minutos na primeira vez.
+Logs do Docker rotacionam (10 MB × 5 por container).
 
-**Atualizar** depois de mudar o código: `docker compose up -d --build`.
-**Backup:** a pasta `backend-data/` guarda o histórico, o de-para de peças e a configuração do /admin.
+## 5. Atualizar o backend (GitHub → servidor)
 
-## 3. Site no Netlify
+1. Desenvolva, rode os testes e faça push para `main`.
+2. No servidor:
 
-1. Suba o projeto no GitHub e, no Netlify, use **Add new site › Import from Git**.
-2. Em **Base directory**, coloque `frontend`. O resto vem do `frontend/netlify.toml`.
-3. Em **Site configuration › Environment variables**, cadastre:
-   - `VITE_API_URL` = `https://SEU-DOMINIO.duckdns.org`
-   - `VITE_API_KEY` = a mesma `API_KEY` do `.env` do servidor
-4. Faça o deploy e copie o endereço do site, por exemplo `https://esl-scraper.netlify.app`.
-5. Libere esse endereço no CORS do servidor. Faça isso pelo `/admin` (passo 4) ou colocando-o em `CORS_ORIGINS` no `.env` e rodando `docker compose up -d`.
+```bash
+sudo /opt/esl-scraper-git/ops/deploy.sh --check    # há atualização?
+sudo /opt/esl-scraper-git/ops/deploy.sh            # aplica
+```
 
-## 4. /admin — mudar configurações sem mexer no servidor
+O script: trava contra execução dupla → confere branch/árvore limpa/fast-forward → recusa se houver **lote em
+andamento** (`FORCAR=1` ignora) → backup → `git merge --ff-only` → build da imagem (`npm ci`) → **testes**
+(`npm test` + Chromium headless + validação do Caddyfile, numa imagem nova, sem dados reais) → reinicia →
+health check local e HTTPS → se qualquer passo falhar, **volta sozinho** para o commit e a imagem anteriores.
+`.env`, `backend-data/` e certificados nunca são tocados. Não existe deploy automático: é sempre manual.
 
-São dois lugares, e os dois pedem a `ADMIN_PASSWORD`:
+Outras opções: `--rebuild` (reconstrói sem commit novo) · `ALVO=<commit>` (vai para um commit específico à frente).
 
-**`https://SEU-SITE.netlify.app/admin`**
-- **Conexão deste navegador:** troca o endereço do backend e a chave da API sem refazer o deploy.
-- **Servidor:** sites liberados no CORS, gravação ligada/desligada, tempo da sessão e gerar uma chave nova da API.
+## 6. Recuperação
 
-**`https://SEU-DOMINIO.duckdns.org/admin`**
-- É a mesma tela do servidor, só que servida pelo próprio backend.
-- Use esta se o CORS estiver errado e o site não conseguir falar com o servidor.
+| Problema | O que fazer |
+|---|---|
+| Deploy falhou | o script já voltou; veja a saída e `docker compose logs --tail 200 backend` |
+| Voltar uma versão manualmente | `git log --oneline` → `git reset --hard <commit>` → `docker compose up -d --build` |
+| Imagem anterior | `docker tag esl-scraper-backend:previous esl-scraper-backend:latest && docker compose up -d --no-build --force-recreate backend` |
+| Restaurar dados | `docker compose stop backend` → `tar -C /opt/esl-scraper-git -xzf /var/backups/esl-scraper/<arquivo>.tar.gz` → `chown -R 1001:1001 backend-data` → `docker compose up -d` |
+| Certificado | `docker compose logs caddy \| grep -i certif` (portas 80/443 precisam estar abertas) |
+| Site não fala com a API | CORS: confira a URL exata do site em `CORS_ORIGINS` ou pelo `https://194-61-238-7.sslip.io/admin` |
+| Chave da API trocada | atualize `VITE_API_KEY` no Netlify e redeploy, ou cole a nova em `/admin` › Conexão deste navegador |
+| Servidor reiniciou | nada: Docker sobe tudo. Confira `docker compose ps`. Sessões ESL e lotes em memória se perdem (o histórico com checkpoints permanece, e a retomada continua de onde parou) |
 
-O que você altera no /admin vale na hora e fica salvo em `backend-data/config.json`. Isso tem prioridade sobre o `.env`.
+## 7. Rodando local (desenvolvimento)
 
-**Sobre a chave da API:** ela fica dentro do site (qualquer pessoa que abrir o site consegue ver), então serve para barrar curioso, não como proteção forte. A senha do ESL e a do admin só trafegam por HTTPS.
-Se trocar a chave pelo /admin:
-- o navegador onde você trocou já passa a usar a nova;
-- nos outros navegadores, cole a chave nova em **Conexão deste navegador**;
-- para valer para todo mundo, atualize também o `VITE_API_KEY` no Netlify e refaça o deploy.
+Veja o README (`backend/.env.example`, `npm install`, `npm run dev`). Testes: `cd backend && npm test`
+(offline; nunca tocam o ESL) · `npm run test:browser` (Chromium) · `npm run test:esl` (abre só a tela de login do ESL).
 
 ---
 ESL Scraper · criado por **Victor Ferreira**

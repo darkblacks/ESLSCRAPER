@@ -1,17 +1,35 @@
-# Servidor: backend + HTTPS automático (Caddy) + atualização do IP no DuckDNS.
-# Uso:  cp deploy.env.example .env  → preencha →  docker compose up -d
+# Servidor: backend (Node + Playwright/Chromium) + HTTPS automático (Caddy).
+# Uso:  cp deploy.env.example .env  → preencha →  docker compose up -d --build
+# Atualizações: ops/deploy.sh (testa, faz backup, aplica e volta à versão anterior se falhar).
+name: esl-scraper
+
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   backend:
-    build: ./backend
-    restart: unless-stopped
+    build:
+      context: ./backend
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+    image: esl-scraper-backend:latest
+    restart: unless-stopped                # volta sozinho após falha e após reboot do servidor
+    init: true                             # recolhe processos do Chromium e repassa o SIGTERM
     env_file: .env
     environment:
       - PORT=3333
     volumes:
-      - ./backend-data:/app/backend/data   # histórico e configurações (faça backup desta pasta)
+      - ./backend-data:/app/backend/data   # histórico e configurações (backup: ops/backup.sh)
     shm_size: "1gb"                        # o Chromium precisa de memória compartilhada
+    mem_limit: 2560m
+    security_opt:
+      - no-new-privileges:true
     expose:
-      - "3333"
+      - "3333"                             # só na rede interna do Docker — nunca publicada no host
+    logging: *logs
 
   caddy:
     image: caddy:2
@@ -19,21 +37,29 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
     environment:
       - DOMINIO=${DOMINIO}
+      - MAX_UPLOAD=${MAX_UPLOAD:-30MB}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data                   # certificados HTTPS
+      - caddy-config:/config
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    logging: *logs
 
-  duckdns:                                 # mantém o DOMINIO apontando para o IP do servidor
+  duckdns:                                 # OPCIONAL: só sobe com  docker compose --profile duckdns up -d
+    profiles: ["duckdns"]                  # mantém um domínio *.duckdns.org apontando para o IP do servidor
     image: lscr.io/linuxserver/duckdns:latest
     restart: unless-stopped
     environment:
-      - SUBDOMAINS=${DUCKDNS_SUBDOMINIO}
-      - TOKEN=${DUCKDNS_TOKEN}
+      - SUBDOMAINS=${DUCKDNS_SUBDOMINIO:-}
+      - TOKEN=${DUCKDNS_TOKEN:-}
       - TZ=America/Sao_Paulo
+    logging: *logs
 
 volumes:
   caddy-data:
+  caddy-config:

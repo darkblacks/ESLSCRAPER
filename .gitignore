@@ -1,5 +1,15 @@
 node_modules/
 dist/
 data/
-.env
 backend-data/
+# segredos e dados operacionais — nunca publicar
+.env
+.env.*
+!.env.example
+*.xml
+*.pem
+*.key
+cookies*.json
+storage-state*.json
+*.sqlite
+*.db

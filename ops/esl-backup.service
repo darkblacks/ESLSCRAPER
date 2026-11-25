@@ -1,0 +1,7 @@
+[Unit]
+Description=Backup diário dos dados do ESL Scraper
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/esl-scraper-git/ops/backup.sh diario

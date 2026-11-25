@@ -1,10 +1,49 @@
-# HTTPS automático (Let's Encrypt) para o domínio do DuckDNS → backend
+# HTTPS automático (Let's Encrypt / ZeroSSL) para o domínio da API → backend.
+# DOMINIO vem do .env. Sem domínio próprio: 194-61-238-7.sslip.io (DNS público que aponta para o IP).
+{
+	servers {
+		timeouts {
+			read_header 30s
+			idle 5m
+		}
+	}
+}
+
 {$DOMINIO} {
 	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# limite de envio (lotes de XML vão em JSON). O backend também limita (BODY_LIMIT).
+	request_body {
+		max_size {$MAX_UPLOAD:30MB}
+	}
+
+	# log de acesso SEM cabeçalhos: X-API-Key, X-Admin-Password e X-Session-Id nunca vão para o log
+	log {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+
 	reverse_proxy backend:3333 {
-		# lotes e logins podem demorar
+		# lançamentos e logins no ESL (Playwright) podem levar vários minutos
 		transport http {
-			read_timeout 5m
+			dial_timeout 5s
+			response_header_timeout 15m
+			read_timeout 15m
+			write_timeout 15m
 		}
 	}
 }
