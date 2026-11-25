@@ -1,0 +1,10 @@
+# HTTPS automático (Let's Encrypt) para o domínio do DuckDNS → backend
+{$DOMINIO} {
+	encode gzip
+	reverse_proxy backend:3333 {
+		# lotes e logins podem demorar
+		transport http {
+			read_timeout 5m
+		}
+	}
+}
