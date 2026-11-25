@@ -35,10 +35,11 @@ formulário encontrado). **Nenhum login, nenhuma gravação.**
 
 ## Pendências
 
-1. **URL do frontend no Netlify** → colocar em `CORS_ORIGINS` (`.env`) e `docker compose up -d backend`
-   (hoje só `http://localhost:5173` está liberado, então o site ainda não consegue chamar a API).
+1. ~~URL do frontend~~ — feito: `https://eslscraper.netlify.app` liberado em `CORS_ORIGINS` (testado: preflight
+   e GET com essa origem recebem `Access-Control-Allow-Origin`; outras origens não).
 2. **Variáveis no Netlify** (usuário): `VITE_API_URL=https://194-61-238-7.sslip.io` e `VITE_API_KEY=<API_KEY do .env>`,
-   depois redeploy do site.
+   depois redeploy do site. Em 25/11 o bundle publicado ainda apontava para `http://localhost:3333`.
+   Alternativa sem redeploy: `https://eslscraper.netlify.app/admin` › Conexão deste navegador.
 3. **Teste de ponta a ponta pelo site** (usuário, com credenciais ESL + código 2FA): login, prévia de XML de
    serviço e de peças em modo simulação, histórico.
 4. **Primeiro lançamento real**: só com autorização explícita — ligar gravação no `/admin`, lançar UMA nota de
