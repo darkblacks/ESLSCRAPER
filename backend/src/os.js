@@ -65,7 +65,7 @@ export async function addServiceToOrder(s, osId, sv) {
     await setText(page, 'fleet_service_order_service[labor_value]', brNum(sv.valor, 2), sc);
     if (sv.comments) await setText(page, 'fleet_service_order_service[comments]', sv.comments, sc);
     await saveModal(page, modalId);
-    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
   });
 }
 
@@ -83,7 +83,7 @@ export async function addPartToOrder(s, osId, p) {
     await setText(page, 'fleet_service_order_part[total_value]', brNum(p.quantidade * p.valorUnitario, 2), sc);
     if (p.comments) await setText(page, 'fleet_service_order_part[comments]', p.comments, sc);
     await saveModal(page, 'workshop_part_modal');
-    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
   });
 }
 

@@ -210,31 +210,53 @@ export async function swalTexto(page) {
 export async function swalConfirmar(page) {
   const antes = await swalTexto(page);
   if (!antes) return true;
+  const fechou = () => page.waitForFunction((t) => {
+    const S = window.Swal || window.swal;
+    if (!S || !S.isVisible || !S.isVisible()) return true;
+    const pop = S.getPopup && S.getPopup();
+    return (pop ? pop.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 200) !== t; // fechou ou já é outra janela
+  }, antes, { timeout: 1500, polling: 100 }).then(() => true).catch(() => false);
   await page.evaluate(() => (window.Swal || window.swal).clickConfirm()).catch(() => {});
-  for (let tentativa = 0; tentativa < 3; tentativa++) {
-    await page.waitForTimeout(500);
-    const agora = await swalTexto(page);
-    if (agora !== antes) return true; // fechou ou já é outra janela
-    const btn = page.locator('.swal2-confirm:visible').first();
-    if (tentativa === 0) {
-      await btn.focus().catch(() => {});
-      await page.keyboard.press('Enter');
-    } else await btn.click({ timeout: 2000 }).catch(() => {});
+  if (await fechou()) return true;
+  const btn = page.locator('.swal2-confirm:visible').first();
+  await btn.focus().catch(() => {});
+  await page.keyboard.press('Enter'); // como a pessoa faz
+  if (await fechou()) return true;
+  await btn.click({ timeout: 2000 }).catch(() => {});
+  return fechou();
+}
+
+/**
+ * Espera (por evento, sem tempo fixo) até: aparecer uma janela do ESL, a página navegar ou aparecer mensagem
+ * de sucesso/erro. Devolve 'swal' | 'saiu' | 'fim' (nada aconteceu no prazo).
+ */
+async function esperarReacao(page, ms, urlInicial) {
+  try {
+    const h = await page.waitForFunction((u) => {
+      const S = window.Swal || window.swal;
+      if (S && S.isVisible && S.isVisible()) return 'swal';
+      if (location.href !== u) return 'saiu';
+      const vis = [...document.querySelectorAll('.toast-message, .toast, .alert-success, .alert-danger, .has-error .help-block')]
+        .some((e) => e.offsetParent !== null && e.innerText.trim());
+      return vis ? 'saiu' : null;
+    }, urlInicial, { timeout: ms, polling: 100 });
+    return await h.jsonValue();
+  } catch (e) {
+    return /Execution context was destroyed|navigation|Target closed/i.test(e.message) ? 'saiu' : 'fim';
   }
-  return (await swalTexto(page)) !== antes;
 }
 
 /** Fecha avisos de sucesso que o ESL mostra depois de gravar/excluir ("...com sucesso" › OK/Enter). Erro → lança. */
 export async function fecharAvisosSwal(page, ms = 3000) {
-  const fim = Date.now() + ms;
   const vistos = [];
-  while (Date.now() < fim) {
+  const url = page.url();
+  // o aviso vem logo depois da ação: espera até 1,5 s por ele (ou pelo prazo menor); sem aviso → segue
+  let janela = Math.min(ms, 1500);
+  for (let i = 0; i < 4; i++) {
+    const r = await esperarReacao(page, janela, url);
+    if (r !== 'swal') break;
     const t = await swalTexto(page);
-    if (!t) {
-      if (vistos.length) break;
-      await page.waitForTimeout(250);
-      continue;
-    }
+    if (!t) break;
     if (/erro|não (foi possível|pode)|inválid|falh/i.test(t)) {
       await swalConfirmar(page);
       throw new Error(`O ESL respondeu: ${t}`);
@@ -242,46 +264,47 @@ export async function fecharAvisosSwal(page, ms = 3000) {
     if (!/sucesso|exclu[ií]d[oa]|removid[oa]|salv[oa]|gravad[oa]|atualizad[oa]/i.test(t)) break; // não é aviso: quem chamou decide
     vistos.push(t);
     await swalConfirmar(page);
+    janela = 800; // pode vir mais um em seguida
   }
   return vistos;
 }
 
 export async function confirmDialogs(page, ms = 4000) {
   const confirmadas = [];
-  const fim = Date.now() + ms;
-  while (Date.now() < fim) {
+  const url = page.url();
+  let janela = ms;
+  for (let i = 0; i < 6; i++) {
+    // responde assim que a janela aparece; se a página já navegou ou mostrou o resultado, não fica esperando
+    const r = await esperarReacao(page, janela, url);
+    if (r !== 'swal') break;
     const st = await page.evaluate(() => {
       const S = window.Swal || window.swal;
       if (!S || !S.isVisible || !S.isVisible()) return null;
       const pop = S.getPopup && S.getPopup();
       return { texto: (pop ? pop.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 200), temConfirmar: !!document.querySelector('.swal2-confirm') };
     }).catch(() => null);
-    if (st) {
-      if (/sucesso|salv[oa] com|gravad[oa]/i.test(st.texto) && !PERGUNTA_OK.test(st.texto)) {
-        await swalConfirmar(page);
-        confirmadas.push(st.texto);
-        break;
-      }
-      const isErro = !st.temConfirmar || /erro|inválid|não pode|obrigat/i.test(st.texto) && !PERGUNTA_OK.test(st.texto);
-      if (PERGUNTA_NAO.test(st.texto) && !PERGUNTA_OK.test(st.texto)) {
-        await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
-        throw new Error(`O ESL perguntou algo que a automação não confirma sozinha: "${st.texto}"`);
-      }
-      if (isErro) {
-        await page.evaluate(() => (window.Swal || window.swal).clickConfirm()).catch(() => {});
-        throw new Error(`O ESL respondeu: ${st.texto}`);
-      }
-      if (!PERGUNTA_OK.test(st.texto)) {
-        await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
-        throw new Error(`O ESL fez uma pergunta não prevista (cancelada por segurança): "${st.texto}"`);
-      }
-      if (!(await swalConfirmar(page))) throw new Error(`Não consegui confirmar a pergunta do ESL (nem com Enter): "${st.texto}"`);
+    if (!st) break;
+    if (/sucesso|salv[oa] com|gravad[oa]/i.test(st.texto) && !PERGUNTA_OK.test(st.texto)) {
+      await swalConfirmar(page);
       confirmadas.push(st.texto);
-      await page.waitForTimeout(300);
-      continue; // pode vir outra pergunta (ou o aviso de sucesso) em seguida
+      break;
     }
-    if (confirmadas.length) break; // já confirmou e não veio outra
-    await page.waitForTimeout(250);
+    const isErro = !st.temConfirmar || /erro|inválid|não pode|obrigat/i.test(st.texto) && !PERGUNTA_OK.test(st.texto);
+    if (PERGUNTA_NAO.test(st.texto) && !PERGUNTA_OK.test(st.texto)) {
+      await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
+      throw new Error(`O ESL perguntou algo que a automação não confirma sozinha: "${st.texto}"`);
+    }
+    if (isErro) {
+      await page.evaluate(() => (window.Swal || window.swal).clickConfirm()).catch(() => {});
+      throw new Error(`O ESL respondeu: ${st.texto}`);
+    }
+    if (!PERGUNTA_OK.test(st.texto)) {
+      await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
+      throw new Error(`O ESL fez uma pergunta não prevista (cancelada por segurança): "${st.texto}"`);
+    }
+    if (!(await swalConfirmar(page))) throw new Error(`Não consegui confirmar a pergunta do ESL (nem com Enter): "${st.texto}"`);
+    confirmadas.push(st.texto);
+    janela = 1500; // depois do "Sim" pode vir o aviso de sucesso; se a página navegar antes, segue na hora
   }
   return confirmadas;
 }
@@ -327,7 +350,7 @@ export async function saveMainForm(page, urlRegex) {
       }, null, { timeout: 20_000, polling: 300 })
       .then((h) => h.jsonValue())
       .catch(() => null);
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
     await capture(page, r?.ok ? 'salvo (ESL confirmou)' : 'ESL não confirmou');
     if (!r?.ok) {
       const errs = await formErrors(page);
@@ -337,7 +360,7 @@ export async function saveMainForm(page, urlRegex) {
     }
     return before.match(urlRegex)[1];
   }
-  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
   const m = page.url().match(urlRegex);
   await capture(page, m && page.url() !== before ? 'salvo (ESL abriu o registro)' : 'ESL não salvou');
   if (!m || page.url() === before) {
@@ -350,6 +373,12 @@ export async function saveMainForm(page, urlRegex) {
 }
 
 /** Abre uma aba da página pelo texto (ex.: "Serviços", "Produtos e Peças", "Entrada no Estoque"). */
+/** Espera a tabela (de uma aba) ter linhas carregadas — o ESL preenche por AJAX depois que a tela abre. */
+export async function esperarTabela(page, seletor = 'table tbody tr', ms = 8000) {
+  await page.waitForFunction((sel) => [...document.querySelectorAll(sel)].some((tr) => tr.offsetParent !== null && tr.querySelector('td')),
+    seletor, { timeout: ms, polling: 150 }).catch(() => {});
+}
+
 export async function openTab(page, text) {
   const tab = page.locator(`a:has-text("${text}"), li:has-text("${text}") > a, [role=tab]:has-text("${text}")`).first();
   if (await tab.count()) {
@@ -384,7 +413,7 @@ export async function saveModal(page, modalId) {
     throw new Error(`O ESL não aceitou o item: ${[...errs, ...page_errs].filter(Boolean).join(' | ') || 'modal não fechou'}`);
   }
   await page.waitForTimeout(700);
-  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
   await capture(page, 'item salvo');
 }
 

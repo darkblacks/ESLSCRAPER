@@ -21,7 +21,7 @@
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
 import { withPage, apiGet } from './esl.js';
-import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar } from './ui.js';
+import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar, esperarTabela } from './ui.js';
 
 const withShot = async (page, fn) => {
   try {
@@ -181,7 +181,7 @@ export async function addPurchaseOrderItem(s, orderId, it) {
         await page.waitForTimeout(300);
       }
       await saveModal(page, 'purchase_item_modal');
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
     })
   );
 }
@@ -215,7 +215,7 @@ export async function createStorageInvoiceFromOrder(s, o) {
       const nav = page.waitForURL(re, { timeout: 25_000 }).catch(() => {});
       await clickAndConfirm(page, () => modal.locator('button:visible').filter({ hasText: /^\s*Salvar\s*$/ }).first().click());
       await nav;
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
       const m = page.url().match(re);
       await capture(page, m ? 'NF de entrada com pedido criada' : 'ESL não criou a NF de entrada com pedido');
       if (!m) {
@@ -269,6 +269,7 @@ export async function linkOrderItem(s, invoiceId, it) {
     withShot(page, async () => {
       await open(page, `/storage/invoice/products/${invoiceId}/edit`);
       await openTab(page, 'Itens do Pedido');
+      await esperarTabela(page, '#tab-order-items tbody tr');
       const alvo = { codigo: String(it.codigo).trim(), qtd: Number(it.quantidade) };
       const lerLinha = () => page.evaluate((a) => {
         const num = (t) => Number(String(t).replace(/\./g, '').replace(',', '.'));
@@ -315,7 +316,7 @@ export async function linkOrderItem(s, invoiceId, it) {
       await capture(page, `vincular ${alvo.codigo} ${alvo.qtd} em ${it.warehouseText}`);
       if (!(await swalConfirmar(page))) throw new Error(`O ESL não aceitou o "Sim" do vínculo do item ${alvo.codigo} (nem com Enter).`);
       await fecharAvisosSwal(page, 5000);
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
       // confere pela API (sem recarregar a tela): a Qtde Recebida do item no pedido tem que ter subido
       const cab = await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null);
       let recebidoDepois = 0;
@@ -361,7 +362,7 @@ export async function addStorageMovement(s, invoiceId, m) {
         await page.waitForTimeout(300);
       }
       await saveModal(page, 'movement_modal');
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}); // não sair antes de o ESL gravar
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {}); // não sair antes de o ESL gravar
     })
   );
 }
@@ -395,7 +396,7 @@ export async function addWithdrawalItem(s, withdrawalId, m) {
       await page.waitForTimeout(600); // o ESL carrega o estoque atual do almoxarifado
       await setText(page, 'storage_movement[amount]', brNum(m.quantidade, 3), sc);
       await saveModal(page, 'withdrawal_movement_modal');
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
     })
   );
 }
@@ -454,6 +455,7 @@ export async function deleteStorageMovement(s, invoiceId, mov) {
     withShot(page, async () => {
       await open(page, `/storage/invoice/products/${invoiceId}/edit`);
       await openTab(page, 'Entrada no Estoque');
+      await esperarTabela(page);
       const alvo = { codigo: String(mov.codigo), qtd: brNum(mov.quantidade, 3), unit: brNum(mov.valorUnitario, 5) };
       let achou = false;
       for (let pagina = 0; pagina < 15 && !achou; pagina++) {
@@ -515,7 +517,7 @@ export async function deleteStorageMovement(s, invoiceId, mov) {
       } finally {
         page.off('dialog', onDialog);
       }
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
       await page.waitForTimeout(800);
       // confere na tela: a linha tem que ter sumido (se havia mais de uma igual, uma a menos)
       const linhasDepois = await contar();
