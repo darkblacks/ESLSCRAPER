@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as L from './ledger.js';
 import { apiGet } from './esl.js';
-import { parseNfe, splitEmissao } from './nfe.js';
+import { parseNfe, splitEmissao, condicaoPagamentoDe } from './nfe.js';
 import {
   findPersonByDocument, findPurchaseInvoice, findStorageInvoices, storageInvoiceMovements, withdrawalMovements,
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
 } from './lookups.js';
-import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
+import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
@@ -345,8 +345,15 @@ export async function lancarPecas(s, payload, { commit }) {
     //    Avulsa: tela /storage/invoice/products/new, como sempre.
     const codigoDe = (pr, it) => (it.acao === 'cadastrar' ? it.novo.code : String(pr.text || '').split(' - ')[0]).trim();
     // padrão (NF, chave, marca de controle) primeiro — nunca é cortado; depois o texto livre do usuário (até 500 caracteres)
-    const comentarioEntrada = [`NF ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
+    // comentário padrão (como lançam à mão: "PLACA NF: nº"): placa da NF, nº/série, chave e marca de controle — nunca cortado;
+    // depois o texto livre do usuário (até 500 caracteres)
+    const placaNf = String(os?.placa || nf.placaNoTexto || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
+    const comentarioEntrada = [`${placaNf ? `PLACA ${placaNf} ` : ''}NF: ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
       .filter(Boolean).join(' | ');
+    // condição de pagamento padronizada (A PRAZO | CARTAO CREDITO | A VISTA), nunca em branco
+    const pag = payload.condicaoPagamento && ['A PRAZO', 'CARTAO CREDITO', 'A VISTA'].includes(String(payload.condicaoPagamento).toUpperCase())
+      ? { condicao: String(payload.condicaoPagamento).toUpperCase(), motivo: 'escolhida na tela' }
+      : condicaoPagamentoDe(nf);
     let invoiceId = E().entrada?.invoiceId;
     if (!invoiceId && tipoNf === 'Avulsa') {
       ctx(s.page, `NF ${nf.numero} · entrada avulsa · cabeçalho`);
@@ -361,11 +368,27 @@ export async function lancarPecas(s, payload, { commit }) {
       if (!pedidoId) {
         ctx(s.page, `NF ${nf.numero} · pedido de compra · cabeçalho`);
         pedidoId = await createPurchaseOrder(s, {
-          filial, providerId: fornecedor.id, providerText: fornecedor.nome, date: payload.date, time: payload.time, comments: comentarioEntrada,
+          filial, providerId: fornecedor.id, providerText: fornecedor.nome, date: payload.date, time: payload.time,
+          paymentCondition: pag.condicao, comments: comentarioEntrada,
         });
         L.step(key, 'entrada', { pedidoId });
-        p('Pedido de compra', true, `Pedido de compra criado (id ${pedidoId}).`);
-      } else p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
+        p('Pedido de compra', true, `Pedido de compra criado (id ${pedidoId}), condição ${pag.condicao} (${pag.motivo}).`);
+      } else {
+        p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
+        // pedido criado antes (versão antiga ou parada no meio): condição de pagamento / comentário em branco → corrige
+        const cab = await getPurchaseOrder(s, pedidoId).catch(() => null);
+        const faltaCond = cab && !String(cab.condicaoPagamento || '').trim();
+        const faltaCom = cab && !String(cab.comentario || '').includes(mk);
+        if (faltaCond || faltaCom) {
+          const r = await updatePurchaseOrderHeader(s, pedidoId, {
+            paymentCondition: faltaCond ? pag.condicao : null,
+            comments: faltaCom ? [comentarioEntrada, String(cab.comentario || '').trim()].filter(Boolean).join(' | ') : null,
+          });
+          p('Pedido de compra', r.aplicado, r.aplicado
+            ? `Corrigido no pedido: ${[faltaCond && `condição ${pag.condicao}`, faltaCom && 'comentário padrão'].filter(Boolean).join(' e ')}.`
+            : `Não deu para corrigir o pedido em branco: ${r.motivo}.`);
+        }
+      }
 
       // itens do pedido: concilia com o que já está no ESL (retomada não duplica)
       const casaPedido = (lista, it) => {
@@ -406,7 +429,15 @@ export async function lancarPecas(s, payload, { commit }) {
       await setStorageInvoiceComments(s, invoiceId, comentarioEntrada);
       L.step(key, 'entrada', { invoiceId, itensOk: [] });
       p('Entrada no estoque', true, `NF de entrada com pedido ${pedido.numero} criada (id ${invoiceId}, tipo Pedido).`);
-    } else p('Entrada no estoque', true, `Retomando NF de entrada id ${invoiceId}.`);
+    } else {
+      p('Entrada no estoque', true, `Retomando NF de entrada id ${invoiceId}.`);
+      // NF criada antes com comentário em branco (ou sem a marca): corrige — a marca é o que identifica a NF desta nota
+      const atual = String((await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null))?.comments || '').trim();
+      if (!atual.includes(mk)) {
+        await setStorageInvoiceComments(s, invoiceId, [comentarioEntrada, atual].filter(Boolean).join(' | '));
+        p('Entrada no estoque', true, atual ? 'Comentário padrão (NF/placa/marca) incluído na NF de entrada.' : 'Comentário em branco corrigido (NF/placa/marca).');
+      }
+    }
     // Confere no ESL o tipo gravado antes de colocar itens (também ao retomar)
     const tipoGravado = await tipoEntrada(s, invoiceId);
     if (tipoGravado && !norm(tipoGravado).includes(norm(tipoNf))) {

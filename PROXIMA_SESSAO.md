@@ -28,6 +28,11 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
   Já usado: vínculo rápido (`linkOrderItemRapido`, qtde < 1000, confere pela API; falha de envio → caminho pela tela).
   Próximos: itens do pedido, peças na OS, itens da baixa e exclusão pelo mesmo caminho — antes, capturar o envio real
   da tela (formato dos números) para copiar idêntico.
+- Pedido de compra: **Condições de Pagamento** padronizada (`condicaoPagamentoDe` em nfe.js): só "A PRAZO" | "CARTAO CREDITO" |
+  "A VISTA" (textos que já existem no ESL); vem do XML (pag/detPag + cobr/dup), nunca em branco (padrão A PRAZO).
+  `payload.condicaoPagamento` (um dos três) tem prioridade, se o site mandar.
+- Comentário padrão do pedido e da NF de entrada: `PLACA XXX0X00 NF: nº série s | Chave … | [XML …] | texto do usuário`
+  (placa = da OS ou a achada no texto da NF). Ao retomar, pedido com condição/comentário em branco e NF sem a marca são corrigidos.
 - **Ainda não rodado com gravação.** Validar com UMA nota, com autorização.
 
 ## Estado atual

@@ -214,3 +214,29 @@ test('refazer como Pedido: lançar nota que não é refazível é recusado antes
   assert.equal(r.ok, false);
   assert.match(r.error, /Refazer como Pedido só vale/);
 });
+
+/* ---------- condição de pagamento padronizada do pedido (A PRAZO | CARTAO CREDITO | A VISTA) ---------- */
+test('condição de pagamento: deduzida do XML e nunca em branco', async () => {
+  const { condicaoPagamentoDe } = await import('../src/nfe.js');
+  const base = { emissao: '2026-11-17T13:53:35-03:00' };
+  // NF 35029 (EMG): boleto (15) em 2 parcelas com vencimento depois da emissão
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '15', valor: 830 }, { tipo: '15', valor: 830 }], vencimentos: [{ vencimento: '2026-12-17' }, { vencimento: '2027-01-01' }] }).condicao, 'A PRAZO');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '03', valor: 100 }] }).condicao, 'CARTAO CREDITO');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '03' }], vencimentos: [{ vencimento: '2026-12-17' }] }).condicao, 'CARTAO CREDITO');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '01' }] }).condicao, 'A VISTA');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '17' }] }).condicao, 'A VISTA');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '04' }] }).condicao, 'A VISTA');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '99', indicador: '1' }] }).condicao, 'A PRAZO');
+  // parcela que vence no mesmo dia da emissão não é "a prazo"
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '01' }], vencimentos: [{ vencimento: '2026-11-17' }] }).condicao, 'A VISTA');
+  // sem nada na NF (ou nota lida por versão antiga) → padrão A PRAZO, nunca vazio
+  assert.equal(condicaoPagamentoDe({ ...base }).condicao, 'A PRAZO');
+  assert.equal(condicaoPagamentoDe({ ...base, pagamentos: [{ tipo: '90' }] }).condicao, 'A PRAZO');
+  assert.equal(condicaoPagamentoDe(null).condicao, 'A PRAZO');
+});
+
+test('NF-e: lê as formas de pagamento (pag/detPag) com o tipo em 2 dígitos', () => {
+  const nf = parseNfe(NFE);
+  assert.ok(Array.isArray(nf.pagamentos));
+  for (const p of nf.pagamentos) assert.ok(p.tipo === null || /^\d{2}$/.test(p.tipo));
+});
