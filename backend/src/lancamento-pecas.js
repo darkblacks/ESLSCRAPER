@@ -208,6 +208,9 @@ export async function lancarPecas(s, payload, { commit }) {
   if (!fornecedor?.id) faltas.push('fornecedor cadastrado no ESL');
   if (!filial) faltas.push('filial (destinatário)');
   if (!payload.date) faltas.push('data de emissão');
+  // Tipo da NF de entrada no ESL: "Pedido" por padrão; "Avulsa" só se pedido explicitamente.
+  const tipoNf = payload.tipoEntrada === 'avulsa' ? 'Avulsa' : 'Pedido';
+  if (payload.tipoEntrada && !['pedido', 'avulsa'].includes(payload.tipoEntrada)) faltas.push('tipo da NF de entrada (pedido ou avulsa)');
   if (!almoxarifado?.id) faltas.push('almoxarifado');
   if (!itens.length) faltas.push('itens');
   // trava de segurança: cada item precisa de número próprio (lista antiga/defeituosa juntava tudo no 1º item)
@@ -294,14 +297,21 @@ export async function lancarPecas(s, payload, { commit }) {
     if (!invoiceId) {
       ctx(s.page, `NF ${nf.numero} · entrada · cabeçalho`);
       invoiceId = await createStorageInvoice(s, {
+        tipo: tipoNf,
         issuerId: fornecedor.id, issuerText: fornecedor.nome, filial, number: nf.numero, date: payload.date, time: payload.time,
         // padrão (NF, chave, marca de controle) primeiro — nunca é cortado; depois o texto livre do usuário (até 500 caracteres)
         comments: [`NF ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
           .filter(Boolean).join(' | '),
       });
       L.step(key, 'entrada', { invoiceId, itensOk: [] });
-      p('Entrada no estoque', true, `NF de entrada criada (id ${invoiceId}).`);
+      p('Entrada no estoque', true, `NF de entrada criada (id ${invoiceId}, tipo ${tipoNf}).`);
     } else p('Entrada no estoque', true, `Retomando NF de entrada id ${invoiceId}.`);
+    // Confere no ESL o tipo gravado antes de colocar itens (também ao retomar)
+    const tipoGravado = await tipoEntrada(s, invoiceId);
+    if (tipoGravado && !norm(tipoGravado).includes(norm(tipoNf))) {
+      throw Object.assign(new Error(`A NF de entrada id ${invoiceId} está no ESL como "${tipoGravado}", não como "${tipoNf}". Parei antes de lançar os itens: corrija o tipo no ESL (ou exclua a NF) e lance de novo.`), { etapa: 'Entrada no estoque' });
+    }
+    if (tipoGravado) p('Tipo da NF de entrada', true, `No ESL: ${tipoGravado}.`);
 
     // Concilia item a item com o que JÁ está gravado no ESL (retomada não duplica e não confia só no histórico)
     const codigoDe = (pr, it) => (it.acao === 'cadastrar' ? it.novo.code : String(pr.text || '').split(' - ')[0]).trim();

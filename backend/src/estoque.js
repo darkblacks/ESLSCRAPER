@@ -48,12 +48,79 @@ export async function createPart(s, p) {
   );
 }
 
-/** Cabeçalho da NF de entrada de produtos/peças. h = { issuerId, issuerText, filial, number, date, time, comments } */
+/**
+ * Campo do tipo da NF de entrada (Avulsa / Pedido) na tela aberta: <select> ou rádios cujo name termina em [invoice_type]
+ * (ou que tenham "tipo" no rótulo com opções avulsa/pedido). Só lê a tela.
+ */
+const TIPO_JS = (I) => {
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const labelOf = (e) => {
+    const l = (e.id && document.querySelector(`label[for="${CSS.escape(e.id)}"]`)) || e.closest('label');
+    return (l?.innerText || e.parentElement?.innerText || e.value || '').trim();
+  };
+  // "avulsa" identifica o campo (um select de pedidos também teria "pedido" no texto)
+  const ehTipo = (txts) => txts.some((t) => /AVULSA/.test(norm(t)));
+  const sels = [...document.querySelectorAll(`select[name^="${I}["]`)];
+  const sel = sels.find((e) => /\[invoice_type\]$/.test(e.name)) || sels.find((e) => ehTipo([...e.options].map((o) => o.text)));
+  if (sel) return { tipo: 'select', name: sel.name, atual: sel.selectedOptions[0]?.text.trim() || '', opcoes: [...sel.options].filter((o) => o.value).map((o) => o.text.trim()) };
+  const todos = [...document.querySelectorAll(`input[type=radio][name^="${I}["]`)];
+  const nome = (todos.find((e) => /\[invoice_type\]$/.test(e.name)) || todos.find((e) => ehTipo([labelOf(e)])))?.name;
+  const radios = nome ? todos.filter((e) => e.name === nome) : [];
+  if (radios.length) return { tipo: 'radio', name: radios[0].name, atual: labelOf(radios.find((r) => r.checked) || {}) || '', opcoes: radios.map(labelOf) };
+  return null;
+};
+
+/** Lê (sem salvar nada) como a tela de nova NF de entrada oferece o tipo: { campo, tipo, atual, opcoes } ou null. */
+export async function tiposEntrada(s) {
+  return withPage(s, async (page) => {
+    await open(page, '/storage/invoice/products/new');
+    const t = await page.evaluate(TIPO_JS, 'storage_invoice_product');
+    return t ? { campo: t.name, tipo: t.tipo, atual: t.atual, opcoes: t.opcoes } : null;
+  });
+}
+
+/** Marca o tipo da NF (ex.: "Pedido") ANTES de salvar. Não achou campo/opção → erro, nada é gravado. */
+export async function setTipoEntrada(page, I, tipo, { opcional = false } = {}) {
+  const r = await page.evaluate(
+    ({ I, tipo, js }) => {
+      const t = new Function(`return (${js})`)()(I);
+      if (!t) return { err: 'campo' };
+      const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+      const alvo = norm(tipo);
+      if (t.tipo === 'select') {
+        const el = document.querySelector(`select[name="${t.name}"]`);
+        const opt = [...el.options].find((o) => o.value && norm(o.text) === alvo) || [...el.options].find((o) => o.value && norm(o.text).includes(alvo));
+        if (!opt) return { err: 'opcao', opcoes: t.opcoes };
+        const $ = window.jQuery;
+        if ($) $(el).val(opt.value).trigger('change');
+        else el.value = opt.value;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: opt.text.trim() };
+      }
+      const radios = [...document.querySelectorAll(`input[type=radio][name="${t.name}"]`)];
+      const labelOf = (e) => ((e.id && document.querySelector(`label[for="${CSS.escape(e.id)}"]`)) || e.closest('label') || e.parentElement)?.innerText?.trim() || e.value;
+      const r = radios.find((e) => norm(labelOf(e)) === alvo) || radios.find((e) => norm(labelOf(e)).includes(alvo));
+      if (!r) return { err: 'opcao', opcoes: t.opcoes };
+      r.click();
+      r.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: labelOf(r) };
+    },
+    { I, tipo, js: TIPO_JS.toString() }
+  );
+  if (r.err === 'campo' && opcional) return null; // Avulsa sem campo de tipo na tela = comportamento de sempre
+  if (r.err === 'campo') throw new Error(`Não achei na tela do ESL o campo do tipo da NF de entrada (avulsa/pedido). Nada foi gravado. Lance como "Avulsa" ou avise para ajustar o scraper.`);
+  if (r.err) throw new Error(`A tela do ESL não tem a opção "${tipo}" no tipo da NF de entrada. Opções: ${r.opcoes.join(', ') || 'nenhuma'}. Nada foi gravado.`);
+  await page.waitForTimeout(600); // a tela pode mostrar/esconder campos conforme o tipo
+  return r.ok;
+}
+
+/** Cabeçalho da NF de entrada de produtos/peças. h = { issuerId, issuerText, filial, number, date, time, comments, tipo } */
 export async function createStorageInvoice(s, h) {
   const I = 'storage_invoice_product';
   return withPage(s, async (page) =>
     withShot(page, async () => {
       await open(page, '/storage/invoice/products/new');
+      if (h.tipo) await setTipoEntrada(page, I, h.tipo, { opcional: h.tipo === 'Avulsa' }); // primeiro: a tela pode mudar conforme o tipo
       await setSelect2(page, `${I}[issuer_id]`, h.issuerId, h.issuerText);
       await selectByLabel(page, `${I}[recipient_id]`, h.filial);
       await setText(page, `${I}[number]`, h.number);

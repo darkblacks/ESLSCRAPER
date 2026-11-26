@@ -119,6 +119,16 @@ test('MODO SIMULAÇÃO: peças completas com commit=false não gravam nada nem t
   assert.match(r.error, /Gravação desativada/);
 });
 
+test('peças: tipo da NF de entrada inválido é recusado antes de tocar o ESL', async () => {
+  const nf = parseNfe(NFE);
+  const r = await lancarPecas(sessaoProibida, {
+    nf: { ...nf, numero: '557' }, fornecedor: { id: 1 }, filial: 1, date: '09/11/2026', almoxarifado: { id: 1 }, tipoEntrada: 'consignado',
+    itens: nf.items.map((i, k) => ({ ...i, produto: { id: 100 + k, text: 'P' } })), os: { modo: 'existente', id: 9 },
+  }, { commit: true });
+  assert.equal(r.etapa, 'validação');
+  assert.match(r.error, /tipo da NF de entrada/);
+});
+
 test('validação: payload incompleto é recusado antes de qualquer etapa', async () => {
   const r = await lancarServico(sessaoProibida, { servicos: [] }, { commit: true });
   assert.equal(r.etapa, 'validação');

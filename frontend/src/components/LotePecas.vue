@@ -11,10 +11,24 @@ const props = defineProps({ commitEnabled: Boolean });
 const TIPOS = [['corrective', 'Corretiva'], ['preventive', 'Preventiva'], ['preparation', 'Preparação'], ['damage', 'Avaria'], ['reform', 'Reforma'], ['help', 'Socorro']];
 
 const pad = reactive(ls('lote_pec_padroes', {
-  destino: 'os', filial: '', almoxarifado: null, solicitante: null, setItem: null, grupo: null, duvida: 'conferir',
+  destino: 'os', tipoNf: 'pedido', filial: '', almoxarifado: null, solicitante: null, setItem: null, grupo: null, duvida: 'conferir',
   criarOs: true, filialOs: null, responsavel: '', tipo: 'corrective', oficina: 'outsourced', comentarioOs: '',
 }));
+if (!pad.tipoNf) pad.tipoNf = 'pedido'; // padrões salvos antes desta opção: Pedido
 watch(pad, (v) => save('lote_pec_padroes', v), { deep: true });
+
+// Conferência (só leitura) de como a tela de NF de entrada do ESL oferece o tipo
+const tipoEsl = ref(null); // { carregando } | { campo } | { erro }
+async function conferirTipo() {
+  tipoEsl.value = { carregando: true };
+  try {
+    const r = await api.tiposEntrada();
+    tipoEsl.value = r.campo ? { campo: r.campo } : { erro: 'Não achei o campo do tipo (avulsa/pedido) na tela de NF de entrada do ESL. Lançar como Pedido vai parar sem gravar nada.' };
+  } catch (e) {
+    tipoEsl.value = { erro: e.message };
+  }
+}
+const temOpcao = (t) => tipoEsl.value?.campo?.opcoes?.some((o) => o.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().includes(t.toUpperCase()));
 const filiais = ref([]);
 const unidades = ref([]);
 api.filiais().then((f) => (filiais.value = f)).catch(() => {});
@@ -120,6 +134,7 @@ function payload(l) {
   const nf = l.p.nf;
   return {
     nf, date: l.p.date, time: l.p.time,
+    tipoEntrada: pad.tipoNf || 'pedido',
     fornecedor: { id: l.fornecedorSel.id, nome: l.fornecedorSel.text },
     filial: l.filialNf || pad.filial,
     almoxarifado: { id: pad.almoxarifado.id, nome: pad.almoxarifado.text },
@@ -155,7 +170,7 @@ function lancarTudo() {
   const cad = prontas.value.reduce((a, l) => a + novas(l), 0);
   const soEstoque = prontas.value.filter((l) => destino(l) === 'estoque').length;
   const comOs = n - soEstoque;
-  if (!confirm(`Lançar ${n} NF(s) de peças (${fmt(total.value)})?\n\n${cad ? `• cadastrar ${cad} peça(s) nova(s)\n` : ''}• entrada no almoxarifado ${pad.almoxarifado.text} (todas)\n` +
+  if (!confirm(`Lançar ${n} NF(s) de peças (${fmt(total.value)})?\n\n${cad ? `• cadastrar ${cad} peça(s) nova(s)\n` : ''}• entrada no almoxarifado ${pad.almoxarifado.text} (todas), NF de entrada como ${pad.tipoNf === 'avulsa' ? 'AVULSA' : 'PEDIDO'}\n` +
     (comOs ? `• ${comOs} NF(s): aplicar na OS aberta de cada placa${pad.criarOs ? ' (ou criar nova)' : ''} e dar baixa\n` : '') +
     (soEstoque ? `• ${soEstoque} NF(s): só entrada no estoque (sem OS, sem baixa)` : ''))) return;
   lancar(prontas.value, payload);
@@ -186,6 +201,14 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
       <div class="grid">
         <label>O que fazer com as notas
           <select v-model="pad.destino"><option value="os">Entrada + aplicar na OS + baixa</option><option value="estoque">Só entrada no estoque (compra p/ estoque)</option></select>
+        </label>
+        <label>Tipo da NF de entrada no ESL
+          <select v-model="pad.tipoNf"><option value="pedido">Pedido (padrão)</option><option value="avulsa">Avulsa</option></select>
+          <small class="muted">
+            <a class="link" @click="conferirTipo">{{ tipoEsl?.carregando ? 'conferindo…' : 'conferir na tela do ESL' }}</a>
+            <template v-if="tipoEsl?.campo"> · ESL oferece: {{ tipoEsl.campo.opcoes.join(', ') }}<b v-if="!temOpcao(pad.tipoNf)" class="msg"> — sem a opção {{ pad.tipoNf === 'avulsa' ? 'Avulsa' : 'Pedido' }}!</b></template>
+            <span v-else-if="tipoEsl?.erro" class="msg"> · {{ tipoEsl.erro }}</span>
+          </small>
         </label>
         <label>Filial (se o XML não indicar)
           <select v-model="pad.filial"><option value="">—</option><option v-for="f in filiais" :key="f.id" :value="f.nome">{{ f.nome }}</option></select>

@@ -15,6 +15,7 @@ import { startBatch, getBatch, cancelBatch, getTelas } from './lote.js';
 import * as C from './config.js';
 import { listSessions, shutdown } from './esl.js';
 import { rateLimit } from './rate-limit.js';
+import { tiposEntrada } from './estoque.js';
 import { adminPage } from './admin-page.js';
 
 const app = express();
@@ -260,6 +261,9 @@ app.post('/api/xml/servicos/preview', requireSession, wrap(async (req, res) => {
 app.post('/api/xml/servicos/lancar', requireSession, wrap(async (req, res) => {
   res.json(await lancarServico(req.esl, req.body || {}, { commit: commitOn() }));
 }));
+
+// Só leitura: abre a tela de nova NF de entrada (sem salvar) e devolve as opções do tipo (Avulsa / Pedido).
+app.get('/api/xml/pecas/tipos-entrada', requireSession, wrap(async (req, res) => res.json({ ok: true, campo: await tiposEntrada(req.esl) })));
 
 app.post('/api/xml/pecas/preview', requireSession, wrap(async (req, res) => {
   const f = req.body?.file;
