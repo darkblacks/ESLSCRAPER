@@ -165,7 +165,8 @@ function lancarTudo() {
 function resumo(l) {
   const r = l.resultado;
   if (!r || !['lançada', 'erro'].includes(l.estado)) return '';
-  if (r.ok) return r.somenteEntrada ? `Lançada: entrada no estoque feita (NF de entrada id ${r.invoiceId}).` : `Lançada: entrada, OS ${r.osNumero} e baixa feitas.`;
+  const tipo = r.tipoEntrada ? ` Tipo da NF de entrada no ESL: ${r.tipoEntrada}.` : '';
+  if (r.ok) return (r.somenteEntrada ? `Lançada: entrada no estoque feita (NF de entrada id ${r.invoiceId}).` : `Lançada: entrada, OS ${r.osNumero} e baixa feitas (NF de entrada id ${r.invoiceId}).`) + tipo;
   const feito = (r.passos || []).filter((p) => p.ok).map((p) => p.etapa);
   if (r.invoiceId) return `Lançada EM PARTE: a NF de entrada foi criada no ESL (id ${r.invoiceId}), e a automação já tentou corrigir sozinha (repetiu os itens e refez a NF), mas faltou o que está em vermelho abaixo. Veja a tela do erro e clique em lançar de novo — o que já está no ESL não é repetido.`;
   if (feito.some((e) => /Cadastro/.test(e))) return 'Não lançada no estoque. Só o cadastro de peça(s) foi feito. Lance de novo depois de corrigir.';

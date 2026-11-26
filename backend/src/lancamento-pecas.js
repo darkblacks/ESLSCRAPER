@@ -31,6 +31,13 @@ const legacy = () => {
 /* Duplicidade                                                        */
 /* ------------------------------------------------------------------ */
 
+/** Tipo da NF de entrada como o ESL gravou (ex.: "Avulsa", "Pedido") — só leitura. */
+export async function tipoEntrada(s, invoiceId) {
+  if (!invoiceId) return null;
+  const x = await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null);
+  return x?.invoice_type_formatted || x?.invoice_type || null;
+}
+
 /** NFs de entrada do mesmo fornecedor cujo comentário cita o nº/chave da nota (lançadas a partir de pedido, à mão). */
 async function storageInvoicesMentioning(s, issuerId, nf) {
   const list = await apiGet(s, `/storage/invoice/products.json?search%5Bstorage_invoices%5D%5Bissuer_id%5D=${issuerId}&per=40`).catch(() => []);
@@ -469,7 +476,7 @@ export async function lancarPecas(s, payload, { commit }) {
     if (os.modo === 'nenhuma') {
       const reg = L.finish(key, 'concluido', { resultado: { invoiceId, somenteEntrada: true, valor: vEsp } });
       return {
-        ok: true, somenteEntrada: true, passos, itens: itensResumo(), registro: reg, invoiceId,
+        ok: true, somenteEntrada: true, passos, itens: itensResumo(), registro: reg, invoiceId, tipoEntrada: await tipoEntrada(s, invoiceId),
         conferencia: { esperado: vEsp, entrada: vGrav, quantidade: qEsp },
         screenshot: await pageShot(s, `/storage/invoice/products/${invoiceId}/edit`, 'Entrada no Estoque').catch(() => null),
       };
@@ -581,7 +588,7 @@ export async function lancarPecas(s, payload, { commit }) {
 
     const reg = L.finish(key, 'concluido', { resultado: { invoiceId, osId, osNumero: osInfo.numero, withdrawalId: wId, valor: vEsp } });
     return {
-      ok: true, passos, itens: itensResumo(), registro: reg, osId, osNumero: osInfo.numero, invoiceId, withdrawalId: wId,
+      ok: true, passos, itens: itensResumo(), registro: reg, osId, osNumero: osInfo.numero, invoiceId, withdrawalId: wId, tipoEntrada: await tipoEntrada(s, invoiceId),
       conferencia: { esperado: vEsp, entrada: vGrav, os: vOs, quantidade: qEsp, baixa: qBaixa },
       screenshot: await pageShot(s, `/fleet/service_orders/${osId}/edit`, 'Produtos e Peças').catch(() => null),
     };
