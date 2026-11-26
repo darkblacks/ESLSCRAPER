@@ -365,6 +365,7 @@ export async function lancarPecas(s, payload, { commit }) {
     } else if (!invoiceId) {
       // 3a) pedido de compra
       let pedidoId = E().entrada?.pedidoId;
+      const pedidoNovo = !pedidoId;
       if (!pedidoId) {
         ctx(s.page, `NF ${nf.numero} · pedido de compra · cabeçalho`);
         pedidoId = await createPurchaseOrder(s, {
@@ -373,9 +374,11 @@ export async function lancarPecas(s, payload, { commit }) {
         });
         L.step(key, 'entrada', { pedidoId });
         p('Pedido de compra', true, `Pedido de compra criado (id ${pedidoId}), condição ${pag.condicao} (${pag.motivo}).`);
-      } else {
-        p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
-        // pedido criado antes (versão antiga ou parada no meio): condição de pagamento / comentário em branco → corrige
+      }
+      {
+        // condição de pagamento é OBRIGATÓRIA: confere no ESL o que gravou (pedido novo ou retomado) e corrige se vazia
+        if (!pedidoNovo) p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
+        // pedido criado antes (versão antiga ou parada no meio) ou que não gravou: condição / comentário em branco → corrige
         const cab = await getPurchaseOrder(s, pedidoId).catch(() => null);
         const faltaCond = cab && !String(cab.condicaoPagamento || '').trim();
         const faltaCom = cab && !String(cab.comentario || '').includes(mk);
@@ -387,7 +390,14 @@ export async function lancarPecas(s, payload, { commit }) {
           p('Pedido de compra', r.aplicado, r.aplicado
             ? `Corrigido no pedido: ${[faltaCond && `condição ${pag.condicao}`, faltaCom && 'comentário padrão'].filter(Boolean).join(' e ')}.`
             : `Não deu para corrigir o pedido em branco: ${r.motivo}.`);
+          if (faltaCond) {
+            const conf = await getPurchaseOrder(s, pedidoId).catch(() => null);
+            if (!String(conf?.condicaoPagamento || '').trim()) {
+              throw Object.assign(new Error(`O pedido ${cab.numero || pedidoId} ficou sem Condição de Pagamento (obrigatória) — preencha "${pag.condicao}" no ESL e lance de novo.`), { etapa: 'Pedido de compra' });
+            }
+          }
         }
+        L.step(key, 'entrada', { pedidoCabOk: true });
       }
 
       // itens do pedido: concilia com o que já está no ESL (retomada não duplica)
