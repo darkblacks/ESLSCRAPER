@@ -10,7 +10,7 @@ import {
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder, searchWarehouses,
 } from './lookups.js';
-import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
+import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, excluirItemEntrada, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
 import { registrarImpressao } from './impressao.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
@@ -577,7 +577,7 @@ export async function lancarPecas(s, payload, { commit, loteId = null }) {
       const atuais = await storageInvoiceMovements(s, invoiceId);
       for (const m of atuais) {
         ctx(s.page, `NF ${nf.numero} · entrada · refazendo: removendo ${m.codigo}`);
-        await deleteStorageMovement(s, invoiceId, { codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
+        await excluirItemEntrada(s, invoiceId, { id: m.id, codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
       }
       const resto = await storageInvoiceMovements(s, invoiceId);
       if (resto.length) {
@@ -618,7 +618,7 @@ export async function lancarPecas(s, payload, { commit, loteId = null }) {
       }
       for (const m of remover) {
         ctx(s.page, `NF ${nf.numero} · entrada · removendo item que não está no XML`);
-        await deleteStorageMovement(s, invoiceId, { codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
+        await excluirItemEntrada(s, invoiceId, { id: m.id, codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
         const ainda = (await storageInvoiceMovements(s, invoiceId)).some((x) => x.id === m.id);
         if (ainda) throw Object.assign(new Error(`Não consegui remover o item ${m.codigo} (${m.quantidade} × ${money(m.valorUnitario)}) da NF de entrada.`), { etapa: 'Entrada no estoque' });
         p('Entrada', true, `Removido ${m.codigo} ${m.quantidade} × R$ ${money(m.valorUnitario)} (não estava no XML).`);
@@ -686,7 +686,7 @@ export async function lancarPecas(s, payload, { commit, loteId = null }) {
         throw Object.assign(new Error(`A NF avulsa id ${old} tem itens que não são desta nota (${estranhos.map((m) => m.codigo).join(', ')}) — não removo nada automaticamente. A NF como Pedido id ${invoiceId} já está feita; tire os itens da avulsa à mão.`), { etapa: 'Retirada da NF avulsa' });
       }
       for (const m of antigos) {
-        await deleteStorageMovement(s, old, { codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
+        await excluirItemEntrada(s, old, { id: m.id, codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
       }
       const sobrou = await storageInvoiceMovements(s, old);
       if (sobrou.length) throw Object.assign(new Error(`A NF avulsa id ${old} ainda tem ${sobrou.length} item(ns) depois da retirada. Lance de novo para tentar outra vez.`), { etapa: 'Retirada da NF avulsa' });
@@ -886,7 +886,7 @@ export async function corrigirPedidoLancado(s, payload, { commit }) {
           p('Pedido de compra', true, `Pedido ${cab.numero} travado pelo ESL (itens recebidos): tirando ${movs.length} item(ns) da NF de entrada para corrigir.`);
           for (const m of movs) {
             ctx(s.page, `NF ${nf.numero} · corrigir pedido · tira ${m.codigo} da NF de entrada`);
-            await deleteStorageMovement(s, invoiceId, { codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
+            await excluirItemEntrada(s, invoiceId, { id: m.id, codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
           }
           let erroCab = null;
           try {

@@ -21,7 +21,7 @@
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
 import { withPage, apiGet } from './esl.js';
-import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar, esperarTabela } from './ui.js';
+import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar, esperarTabela, esperarTabelaPronta } from './ui.js';
 
 const withShot = async (page, fn) => {
   try {
@@ -498,6 +498,49 @@ export async function setStorageInvoiceTotals(s, invoiceId, { frete = 0, descont
  * Procura a linha pela combinação código + qtde + vl. unitário (percorre as páginas da tabela),
  * abre o menu da linha › Excluir e confirma SOMENTE a pergunta "Tem certeza que deseja excluir o item?".
  */
+/**
+ * Exclusão RÁPIDA de um item da NF de entrada: o "Sim" do "Tem certeza que deseja excluir?" do ESL chama
+ * Record.destroy → _(namespacedUrlFor('/storage/invoices/:invoice_id/movements/:id')).deleteJSON() (lido no JS do ESL).
+ * Aqui a mesma chamada é feita na tela já aberta. Confere pela API que o item saiu. { ok } | { ok:false, motivo }
+ */
+export async function deleteStorageMovementRapido(s, invoiceId, movId) {
+  if (!/^\d+$/.test(String(movId))) return { ok: false, motivo: 'item sem id' };
+  const r = await withPage(s, async (page) => {
+    if (!/eslcloud\.com\.br\//.test(page.url())) await open(page, `/storage/invoice/products/${invoiceId}/edit`);
+    return page.evaluate(({ invoiceId, movId }) => new Promise((res) => {
+      try {
+        if (typeof window.namespacedUrlFor !== 'function' || !window._ || !window._.prototype) return res({ ok: false, motivo: 'funções do ESL indisponíveis na tela' });
+        window._(window.namespacedUrlFor(`/storage/invoices/${invoiceId}/movements/${movId}`)).deleteJSON({
+          success: () => res({ ok: true }),
+          error: (xhr) => res({ ok: false, motivo: `ESL respondeu HTTP ${xhr?.status}: ${String(xhr?.responseText || '').replace(/\s+/g, ' ').slice(0, 200)}` }),
+        });
+        setTimeout(() => res({ ok: false, motivo: 'sem resposta do ESL em 20 s', talvez: true }), 20_000);
+      } catch (e) {
+        res({ ok: false, motivo: e.message });
+      }
+    }), { invoiceId, movId });
+  });
+  if (!r.ok && !r.talvez) return r;
+  for (let t = 0; t < 10; t++) {
+    const movs = await apiGet(s, `/storage/invoices/${invoiceId}/movements?page=1&per=200`).catch(() => null);
+    const lista = Array.isArray(movs) ? movs : movs?.data;
+    if (lista && !lista.some((m) => String(m.id) === String(movId))) return { ok: true };
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+  return { ok: false, motivo: 'enviei a exclusão mas o item continua na NF', enviado: true };
+}
+
+/** Exclui um item da NF de entrada: rápido (por id) e, se não der, pela tela. mov = { id?, codigo, quantidade, valorUnitario } */
+export async function excluirItemEntrada(s, invoiceId, mov) {
+  if (mov.id) {
+    const r = await deleteStorageMovementRapido(s, invoiceId, mov.id);
+    if (r.ok) return;
+    if (r.enviado) throw new Error(`Exclusão do item ${mov.codigo} enviada ao ESL, mas ele continua na NF de entrada ${invoiceId}. Confira e lance de novo.`);
+    console.log(`[tempo] exclusão rápida indisponível (${r.motivo}) — ${mov.codigo} pela tela`);
+  }
+  return deleteStorageMovement(s, invoiceId, mov);
+}
+
 export async function deleteStorageMovement(s, invoiceId, mov) {
   return withPage(s, async (page) =>
     withShot(page, async () => {
@@ -533,7 +576,24 @@ export async function deleteStorageMovement(s, invoiceId, mov) {
         await page.waitForTimeout(1200);
       }
       if (!achou) throw new Error(`Linha ${alvo.codigo} ${alvo.qtd} × ${alvo.unit} não encontrada na tabela da NF de entrada.`);
-      await page.click('[data-esl-del="toggle"]');
+      // a tabela do ESL recarrega por AJAX (camada "carregando" cobre o botão e a linha é redesenhada): espera e tenta de novo
+      for (let tentativa = 0; ; tentativa++) {
+        await esperarTabelaPronta(page);
+        try {
+          await page.click('[data-esl-del="toggle"]', { timeout: 6000 });
+          break;
+        } catch (e) {
+          if (tentativa >= 3) throw e;
+          await page.evaluate((a) => {
+            const tr = [...document.querySelectorAll('table tbody tr')].filter((r) => r.offsetParent !== null).find((r) => {
+              const c = [...r.querySelectorAll('td')].map((td) => td.innerText.trim().replace(/\./g, ''));
+              return c[0] === a.codigo && c.includes(a.qtd) && c.includes(a.unit);
+            });
+            const t = tr?.querySelector('.dropdown-toggle, button[data-toggle="dropdown"], .btn-group button:last-child');
+            if (t) t.setAttribute('data-esl-del', 'toggle');
+          }, alvo);
+        }
+      }
       await page.waitForTimeout(400);
       const excluir = page.locator('.dropdown-menu:visible a:has-text("Excluir"), .dropdown-menu:visible button:has-text("Excluir")').first();
       await excluir.waitFor({ state: 'visible', timeout: 5000 });
