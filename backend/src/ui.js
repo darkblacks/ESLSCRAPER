@@ -70,7 +70,7 @@ async function setSelect2Injetando(page, name, id, text, scope) {
  * a opção com setSelect2 quebra com "Cannot read properties of undefined (reading 'id')").
  */
 export async function select2Pesquisar(page, name, termo, textoEsperado, scope = '') {
-  const sel = `${scope} [name="${name}"]`.trim();
+  const sel = /^[#.]/.test(name) ? `${scope} ${name}`.trim() : `${scope} [name="${name}"]`.trim(); // aceita "#id" ou name
   await page.waitForSelector(sel, { state: 'attached', timeout: 10_000 });
   // abre o select2 (o <select> fica escondido; o clique é no container irmão)
   const aberto = await page.evaluate((sel) => {
