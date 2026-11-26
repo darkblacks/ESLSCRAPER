@@ -67,12 +67,22 @@ O que for alterado pelo `/admin` (CORS, gravação, TTL, nova chave) fica em `ba
 
 ## 3. Netlify (frontend — já publicado, não recriar)
 
-Em **Site configuration › Environment variables**:
+Em **Site configuration › Environment variables** (dá para colar tudo de uma vez em **Add a variable ›
+Import from a .env file**, usando `frontend/netlify.env.example` com a chave preenchida):
 
 | Variável | Valor |
 |---|---|
 | `VITE_API_URL` | `https://194-61-238-7.sslip.io` |
 | `VITE_API_KEY` | o valor de `API_KEY` do `.env` do servidor (`sudo grep ^API_KEY= /opt/esl-scraper-git/.env`) |
+
+Pode marcar `VITE_API_KEY` como **Contains secret values** (fica mascarada no painel do Netlify). O
+`netlify.toml` já tira `VITE_API_URL`/`VITE_API_KEY` do secret scanning (`SECRETS_SCAN_OMIT_KEYS`), senão o
+deploy falharia: o valor aparece no JavaScript do site de propósito. Se a **smart detection** ainda bloquear o
+build, adicione no Netlify `SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES` com o valor da chave.
+
+Com as variáveis no build, o site abre já conectado — ninguém precisa preencher `/admin › Conexão deste
+navegador`. O que estiver salvo nessa tela em um navegador continua valendo mais que o build (botão "Usar o padrão do build"
+lá, se a chave mudar).
 
 Depois: **Deploys › Trigger deploy** (variáveis `VITE_*` entram no build). E libere a URL do site no CORS
 (`CORS_ORIGINS` no `.env` + `docker compose up -d backend`, ou pelo `/admin`).

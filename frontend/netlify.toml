@@ -5,6 +5,10 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # VITE_API_KEY vai, por definição, para o JavaScript do site. Se ela for marcada como "secret" no Netlify,
+  # o secret scanning acharia o valor no build e bloquearia o deploy — por isso ela fica fora da varredura.
+  # Nunca coloque senha do ESL ou ADMIN_PASSWORD em variáveis VITE_* (essas sim são segredo).
+  SECRETS_SCAN_OMIT_KEYS = "VITE_API_URL,VITE_API_KEY"
 
 # SPA: /admin e qualquer outra rota abrem o app
 [[redirects]]
