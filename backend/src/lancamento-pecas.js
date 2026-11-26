@@ -8,8 +8,9 @@ import { parseNfe, splitEmissao } from './nfe.js';
 import {
   findPersonByDocument, findPurchaseInvoice, findStorageInvoices, storageInvoiceMovements, withdrawalMovements,
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
+  getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
 } from './lookups.js';
-import { createPart, createStorageInvoice, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot } from './estoque.js';
+import { createPart, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot } from './estoque.js';
 import { ctx } from './ui.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
@@ -282,22 +283,70 @@ export async function lancarPecas(s, payload, { commit }) {
     L.step(key, 'cadastros', { produtos, ok: true });
     for (const it of itens) L.learnPart(onlyDigits(nf.emitente.cnpj), it.cProd, produtos[it.nItem]);
 
-    // 3) Entrada no estoque (NF de entrada)
+    // 3) Entrada no estoque COM PEDIDO DE COMPRA (tipo "Pedido", como a Transmassa lança — nunca "Avulsa"):
+    //    3a) pedido de compra com os itens do XML → 3b) NF de entrada "Com Pedido de Compra" → 3c) itens na Entrada no Estoque.
+    //    O nº da NF de entrada passa a ser o nº do pedido (o ESL preenche e trava); o nº/chave da NF fica no comentário.
+    const codigoDe = (pr, it) => (it.acao === 'cadastrar' ? it.novo.code : String(pr.text || '').split(' - ')[0]).trim();
+    // padrão (NF, chave, marca de controle) primeiro — nunca é cortado; depois o texto livre do usuário (até 500 caracteres)
+    const comentarioEntrada = [`NF ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
+      .filter(Boolean).join(' | ');
     let invoiceId = E().entrada?.invoiceId;
     if (!invoiceId) {
-      ctx(s.page, `NF ${nf.numero} · entrada · cabeçalho`);
-      invoiceId = await createStorageInvoice(s, {
-        issuerId: fornecedor.id, issuerText: fornecedor.nome, filial, number: nf.numero, date: payload.date, time: payload.time,
-        // padrão (NF, chave, marca de controle) primeiro — nunca é cortado; depois o texto livre do usuário (até 500 caracteres)
-        comments: [`NF ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
-          .filter(Boolean).join(' | '),
-      });
+      // 3a) pedido de compra
+      let pedidoId = E().entrada?.pedidoId;
+      if (!pedidoId) {
+        ctx(s.page, `NF ${nf.numero} · pedido de compra · cabeçalho`);
+        pedidoId = await createPurchaseOrder(s, {
+          filial, providerId: fornecedor.id, providerText: fornecedor.nome, date: payload.date, time: payload.time,
+          comments: comentarioEntrada,
+        });
+        L.step(key, 'entrada', { pedidoId });
+        p('Pedido de compra', true, `Pedido de compra criado (id ${pedidoId}).`);
+      } else p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
+
+      // itens do pedido: concilia com o que já está no ESL (retomada não duplica)
+      const casaPedido = (lista, it) => {
+        const cod = norm(codigoDe(produtos[it.nItem], it));
+        const i = lista.findIndex((x) => norm(x.codigo) === cod && Math.abs(x.quantidade - Number(it.quantidade)) < 0.001);
+        return i >= 0 ? lista.splice(i, 1)[0] : null;
+      };
+      let noPedido = await purchaseOrderItems(s, pedidoId);
+      for (const it of itens) {
+        if (casaPedido(noPedido, it)) continue;
+        ctx(s.page, `NF ${nf.numero} · pedido de compra · item ${it.nItem} (${it.cProd}) ${it.quantidade} × ${money(it.valorUnitario)}`);
+        await addPurchaseOrderItem(s, pedidoId, {
+          productId: produtos[it.nItem].id, productText: produtos[it.nItem].text, quantidade: it.quantidade, valorUnitario: it.valorUnitario,
+        });
+      }
+      // conferência do pedido: todos os itens do XML, nada sobrando
+      noPedido = await purchaseOrderItems(s, pedidoId);
+      const faltamPedido = itens.filter((it) => !casaPedido(noPedido, it));
+      if (faltamPedido.length || noPedido.length) {
+        throw Object.assign(new Error(`O pedido de compra ${pedidoId} não bate com o XML: ` +
+          [faltamPedido.length && `faltam ${faltamPedido.map((it) => `item ${it.nItem} (${it.cProd})`).join(', ')}`,
+            noPedido.length && `sobram ${noPedido.map((x) => `${x.codigo} ${x.quantidade}`).join(', ')}`].filter(Boolean).join('; ') + '.'), { etapa: 'Pedido de compra' });
+      }
+      const pedido = await getPurchaseOrder(s, pedidoId);
+      L.step(key, 'entrada', { pedidoId, pedidoNumero: pedido.numero, pedidoOk: true });
+      p('Pedido de compra', true, `Pedido ${pedido.numero} com ${itens.length} item(ns), igual ao XML.`);
+
+      // 3b) NF de entrada "Com Pedido de Compra" (se já existir uma ligada a este pedido, usa ela)
+      ctx(s.page, `NF ${nf.numero} · entrada com pedido ${pedido.numero}`);
+      invoiceId = (await findStorageInvoiceByOrder(s, fornecedor.id, pedidoId))?.id;
+      if (!invoiceId) {
+        const r = await createStorageInvoiceFromOrder(s, { orderId: pedidoId, orderText: String(pedido.numero) });
+        invoiceId = r.id || (await findStorageInvoiceByOrder(s, fornecedor.id, pedidoId))?.id;
+        if (!invoiceId) {
+          throw Object.assign(new Error(`O ESL não criou a NF de entrada com o pedido ${pedido.numero}${r.erro ? `: ${r.erro}` : '.'}`), { etapa: 'Entrada no estoque' });
+        }
+      }
+      // comentário com NF/chave/marca (a marca é o que autoriza a correção automática a mexer nesta NF)
+      await setStorageInvoiceComments(s, invoiceId, comentarioEntrada);
       L.step(key, 'entrada', { invoiceId, itensOk: [] });
-      p('Entrada no estoque', true, `NF de entrada criada (id ${invoiceId}).`);
+      p('Entrada no estoque', true, `NF de entrada com pedido ${pedido.numero} criada (id ${invoiceId}).`);
     } else p('Entrada no estoque', true, `Retomando NF de entrada id ${invoiceId}.`);
 
     // Concilia item a item com o que JÁ está gravado no ESL (retomada não duplica e não confia só no histórico)
-    const codigoDe = (pr, it) => (it.acao === 'cadastrar' ? it.novo.code : String(pr.text || '').split(' - ')[0]).trim();
     const sobra = [...(await storageInvoiceMovements(s, invoiceId))];
     const casar = (it) => {
       const cod = norm(codigoDe(produtos[it.nItem], it));
@@ -459,9 +508,15 @@ export async function lancarPecas(s, payload, { commit }) {
     const freteAtual = Number(cabAtual?.freight_total || 0);
     if (Math.abs(descAtual - desc) > 0.009 || Math.abs(freteAtual - frete) > 0.009) {
       ctx(s.page, `NF ${nf.numero} · entrada · desconto/frete do cabeçalho`);
-      await setStorageInvoiceTotals(s, invoiceId, { frete, desconto: desc });
-      L.step(key, 'entrada', { totaisOk: true });
-      p('Entrada', true, `Cabeçalho ajustado: desconto R$ ${money(desc)}${frete ? `, frete R$ ${money(frete)}` : ''} (total da NF R$ ${money(vGrav - desc + frete)}).`);
+      const tot = await setStorageInvoiceTotals(s, invoiceId, { frete, desconto: desc });
+      if (tot?.aplicado === false) {
+        // NF com pedido: o ESL pode travar frete/desconto. Não interrompe (itens e quantidades estão certos), mas avisa.
+        L.step(key, 'entrada', { totaisOk: false, alertaTotais: tot.motivo });
+        p('Entrada', false, `Desconto R$ ${money(desc)}${frete ? ` / frete R$ ${money(frete)}` : ''} da NF não aplicado: ${tot.motivo}. Ajuste no ESL se precisar.`);
+      } else {
+        L.step(key, 'entrada', { totaisOk: true });
+        p('Entrada', true, `Cabeçalho ajustado: desconto R$ ${money(desc)}${frete ? `, frete R$ ${money(frete)}` : ''} (total da NF R$ ${money(vGrav - desc + frete)}).`);
+      }
     }
     L.step(key, 'entrada', { ok: true, conferencia: { itens: movs.length, quantidade: qGrav, valor: vGrav } });
 

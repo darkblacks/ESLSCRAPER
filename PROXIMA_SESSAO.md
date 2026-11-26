@@ -33,6 +33,14 @@ forçado (teste quebrado num commit local) → versão anterior mantida.
 **Contra o ESL real (somente leitura):** abertura da tela `/users/sign_in` pelo Chromium do servidor (HTTP 200,
 formulário encontrado). **Nenhum login, nenhuma gravação.**
 
+## Mudança 26/11/2026 — entrada de peças COM PEDIDO
+
+- A aba XML de Peças agora cria um **Pedido de Compra** (itens do XML) e faz a NF de entrada **"Com Pedido de Compra"**
+  (tipo "Pedido"), como a Transmassa lança. Antes criava NF **Avulsa**. Telas mapeadas no topo de `src/estoque.js`.
+- O nº da NF de entrada passa a ser o nº do pedido (o ESL preenche e trava); NF/chave/marca ficam no comentário.
+- Se o ESL travar frete/desconto na NF com pedido, o lançamento segue e avisa (passo com ok=false).
+- **Não testado contra o ESL com gravação** (só leitura das telas). Validar com UMA nota em modo real, com autorização.
+
 ## Pendências
 
 1. ~~URL do frontend~~ — feito: `https://eslscraper.netlify.app` liberado em `CORS_ORIGINS` (testado: preflight
