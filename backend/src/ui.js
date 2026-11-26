@@ -100,6 +100,14 @@ export async function select2Pesquisar(page, name, termo, textoEsperado, scope =
     const i = ok.findIndex((o) => txt(o) === alvo);
     let j = i >= 0 ? i : ok.findIndex((o) => txt(o).startsWith(alvo + ' ') || txt(o).startsWith(alvo + ' -'));
     if (j < 0) { const k = ok.filter((o) => txt(o) === termo || txt(o).startsWith(termo + ' ')); if (k.length === 1) j = ok.indexOf(k[0]); } // só se for único
+    if (j < 0) {
+      // o ESL às vezes monta o texto do resultado (ex.: pedido "Nº Pedido:4121 FORNECEDOR"): aceita o termo como palavra
+      // inteira, só se um único resultado tiver — e quem chama confere o id escolhido
+      const esc = termo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(^|[^0-9A-Za-z])${esc}([^0-9A-Za-z]|$)`, 'i');
+      const k = ok.filter((o) => re.test(txt(o)));
+      if (k.length === 1) j = ok.indexOf(k[0]);
+    }
     if (j < 0) return { semMatch: ok.map(txt).slice(0, 10).join(' | ') };
     ok.forEach((o) => o.removeAttribute('data-esl-opt'));
     ok[j].setAttribute('data-esl-opt', '1');
