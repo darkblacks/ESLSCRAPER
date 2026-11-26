@@ -14,6 +14,12 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
 - Confirmações do ESL (SweetAlert 8): `swalConfirmar` clica "Sim/OK" e, se a janela não fechar, dá **Enter** no botão;
   `fecharAvisosSwal` fecha o aviso de sucesso que vem depois (erro → para). Exclusão de item da NF de entrada: confirma
   "Tem certeza que deseja excluir o item?", fecha o aviso, aceita `confirm()` nativo e **confere que a linha sumiu**.
+- NF com pedido, mapeado na tela real (NF 143555 / pedido 4121): salvar o modal pergunta "Tem certeza que deseja salvar
+  esses dados?" (Sim/Enter) e abre /storage/invoice/products/:id/edit. Os itens entram pela aba **Itens do Pedido** › 🔗
+  → "Deseja vincular este produto?" com Almoxarifado (select2 `#order_item_warehouse`) e Qtde Recebida (`.amount_received`)
+  → Sim. `linkOrderItem` faz isso e confere a Qtde Recebida. NF avulsa continua com "Novo Item".
+- Busca do pedido no modal mostra "Nº Pedido:4121 FORNECEDOR" — o pedido é escolhido digitando (o ESL precisa dos dados
+  completos do resultado; injetar a opção quebrava com "reading 'id'").
 - **Ainda não rodado com gravação.** Validar com UMA nota, com autorização.
 
 ## Estado atual

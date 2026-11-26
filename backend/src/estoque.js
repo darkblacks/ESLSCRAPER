@@ -21,7 +21,7 @@
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
 import { withPage } from './esl.js';
-import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal } from './ui.js';
+import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar } from './ui.js';
 
 const withShot = async (page, fn) => {
   try {
@@ -200,7 +200,12 @@ export async function createStorageInvoiceFromOrder(s, o) {
       const modal = page.locator('#storage-invoice-modal');
       await modal.waitFor({ state: 'visible', timeout: 10_000 });
       await page.waitForTimeout(300);
-      await setSelect2(page, 'storage_invoice_product[purchase_order_id]', o.orderId, o.orderText, '#storage-invoice-modal');
+      // escolhe o pedido pela busca do próprio ESL (digita o nº e clica no resultado): o ESL precisa dos dados completos
+      // do pedido que vêm da busca — injetar só id/texto quebra o handler dele (loadPurchaseOrderElements)
+      const esc = await select2Pesquisar(page, 'storage_invoice_product[purchase_order_id]', o.orderText, o.orderText, '#storage-invoice-modal');
+      if (String(esc.valor) !== String(o.orderId)) {
+        throw new Error(`Na busca do pedido ${o.orderText} o ESL trouxe outro pedido (id ${esc.valor}, esperado ${o.orderId}). Nada foi salvo.`);
+      }
       await page.waitForTimeout(500);
       await capture(page, `pedido ${o.orderText} escolhido, antes de salvar a NF de entrada`);
       const re = /\/storage\/invoice\/products\/(\d+)\/edit/;
@@ -246,6 +251,79 @@ export async function createStorageInvoice(s, h) {
       await setText(page, `${I}[emission_at_time]`, h.time || '08:00');
       if (h.comments) await setText(page, `${I}[comments]`, h.comments);
       return saveMainForm(page, /\/storage\/invoice\/products\/(\d+)\/edit/);
+    })
+  );
+}
+
+/**
+ * Entrada de UM item do pedido numa NF de entrada COM PEDIDO (como no ESL à mão): aba "Itens do Pedido" › botão 🔗 da linha
+ * → janela "Deseja vincular este produto?" (SweetAlert) com Almoxarifado (select2 #order_item_warehouse) e Qtde Recebida
+ * (#amount_received) → Sim (clique; Enter se não fechar) → aviso → confere que a Qtde Recebida da linha subiu.
+ * Mapeado na tela real em 26/11/2026 (NF 143555, pedido 4121). it = { codigo, quantidade, warehouseId, warehouseText }
+ */
+export async function linkOrderItem(s, invoiceId, it) {
+  return withPage(s, async (page) =>
+    withShot(page, async () => {
+      await open(page, `/storage/invoice/products/${invoiceId}/edit`);
+      await openTab(page, 'Itens do Pedido');
+      const alvo = { codigo: String(it.codigo).trim(), qtd: Number(it.quantidade) };
+      const lerLinha = () => page.evaluate((a) => {
+        const num = (t) => Number(String(t).replace(/\./g, '').replace(',', '.'));
+        document.querySelectorAll('[data-esl-link]').forEach((e) => e.removeAttribute('data-esl-link'));
+        const linhas = [...document.querySelectorAll('#tab-order-items tbody tr')].filter((tr) => tr.offsetParent !== null);
+        // colunas: Código | Item | Quantidade | Qtde Recebida | Saldo | Valor Unitário | Valor Total | 🔗
+        const cand = linhas.map((tr) => ({ tr, c: [...tr.querySelectorAll('td')].map((td) => td.innerText.trim()) }))
+          .filter((x) => x.c[0] === a.codigo && Math.abs(num(x.c[2]) - a.qtd) < 0.001);
+        if (!cand.length) return { erro: 'linha' };
+        const aberta = cand.find((x) => num(x.c[4]) > 0.0001);
+        if (!aberta) return { recebido: num(cand[0].c[3]), jaRecebido: true };
+        const b = aberta.tr.querySelector('td:last-child a, td:last-child button');
+        if (!b) return { erro: 'botao' };
+        b.setAttribute('data-esl-link', '1');
+        return { recebido: num(aberta.c[3]), saldo: num(aberta.c[4]) };
+      }, alvo);
+      const antes = await lerLinha();
+      if (antes.erro === 'linha') throw new Error(`Item ${alvo.codigo} (${alvo.qtd}) não está nos Itens do Pedido desta NF de entrada.`);
+      if (antes.erro) throw new Error(`Não achei o botão de vincular do item ${alvo.codigo} nos Itens do Pedido.`);
+      if (antes.jaRecebido) return { jaRecebido: true };
+      await page.locator('[data-esl-link="1"]').first().scrollIntoViewIfNeeded().catch(() => {});
+      await page.click('[data-esl-link="1"]');
+      const t = await page.waitForFunction(() => {
+        const S = window.Swal || window.swal;
+        return S && S.isVisible() ? S.getPopup().innerText.replace(/\s+/g, ' ').trim() : null;
+      }, null, { timeout: 8000 }).then((h) => h.jsonValue()).catch(() => null);
+      if (!t || !/vincular/i.test(t)) {
+        if (t) await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
+        throw new Error(`Ao clicar em vincular o item ${alvo.codigo}, o ESL ${t ? `perguntou outra coisa: "${t}"` : 'não abriu a janela de vínculo'}.`);
+      }
+      try {
+        const esc = await select2Pesquisar(page, '#order_item_warehouse', it.warehouseText, it.warehouseText);
+        if (String(esc.valor) !== String(it.warehouseId)) throw new Error(`a busca do almoxarifado "${it.warehouseText}" escolheu outro (id ${esc.valor}, esperado ${it.warehouseId})`);
+        await page.evaluate((q) => {
+          const e = document.querySelector('.swal2-popup #amount_received, .swal2-popup .amount_received');
+          e.value = q;
+          e.dispatchEvent(new Event('input', { bubbles: true }));
+          e.dispatchEvent(new Event('change', { bubbles: true }));
+        }, brNum(alvo.qtd, 3));
+      } catch (e) {
+        await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
+        throw new Error(`Vínculo do item ${alvo.codigo} cancelado: ${e.message}`);
+      }
+      await capture(page, `vincular ${alvo.codigo} ${alvo.qtd} em ${it.warehouseText}`);
+      if (!(await swalConfirmar(page))) throw new Error(`O ESL não aceitou o "Sim" do vínculo do item ${alvo.codigo} (nem com Enter).`);
+      await fecharAvisosSwal(page, 5000);
+      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      // confere: recarrega e a Qtde Recebida da linha tem que ter subido
+      await open(page, `/storage/invoice/products/${invoiceId}/edit`);
+      await openTab(page, 'Itens do Pedido');
+      const depois = await lerLinha();
+      const recebidoDepois = depois.jaRecebido ? depois.recebido : depois.recebido ?? 0;
+      if (!(recebidoDepois > (antes.recebido || 0) + 0.0001)) {
+        await capture(page, `vínculo NÃO confirmado ${alvo.codigo}`);
+        throw new Error(`Confirmei o vínculo do item ${alvo.codigo}, mas a Qtde Recebida não mudou no ESL.`);
+      }
+      await capture(page, `vinculado ${alvo.codigo}`);
+      return { recebido: recebidoDepois };
     })
   );
 }

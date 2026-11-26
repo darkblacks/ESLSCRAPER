@@ -10,7 +10,7 @@ import {
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
 } from './lookups.js';
-import { createPart, createStorageInvoice, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
+import { createPart, createStorageInvoice, linkOrderItem, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
@@ -410,6 +410,16 @@ export async function lancarPecas(s, payload, { commit }) {
     }
     if (tipoGravado) p('Tipo da NF de entrada', true, `No ESL: ${tipoGravado}.`);
 
+    // NF com pedido: os itens entram pelo vínculo do item do pedido (🔗 › "Deseja vincular este produto?"), como à mão;
+    // NF avulsa: pelo "Novo Item" da Entrada no Estoque
+    const comPedido = !!(await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null))?.purchase_order_id;
+    const entrarItem = (it) => comPedido
+      ? linkOrderItem(s, invoiceId, { codigo: codigoDe(produtos[it.nItem], it), quantidade: it.quantidade, warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome })
+      : addStorageMovement(s, invoiceId, {
+          productId: produtos[it.nItem].id, productText: produtos[it.nItem].text, quantidade: it.quantidade, valorUnitario: it.valorUnitario,
+          icms: it.icms, ipi: it.ipi, warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome,
+        });
+
     // Concilia item a item com o que JÁ está gravado no ESL (retomada não duplica e não confia só no histórico)
     const sobra = [...(await storageInvoiceMovements(s, invoiceId))];
     const casar = (it) => {
@@ -436,10 +446,7 @@ export async function lancarPecas(s, payload, { commit }) {
       ctx(s.page, `NF ${nf.numero} · entrada · item ${it.nItem} (${it.cProd}) ${it.quantidade} × ${money(it.valorUnitario)}${rotulo}`);
       let mv = null;
       try {
-        await addStorageMovement(s, invoiceId, {
-          productId: produtos[it.nItem].id, productText: produtos[it.nItem].text, quantidade: it.quantidade, valorUnitario: it.valorUnitario,
-          icms: it.icms, ipi: it.ipi, warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome,
-        });
+        await entrarItem(it);
       } catch (e) {
         r.entrada = { ok: false, msg: e.message };
       }
@@ -537,10 +544,7 @@ export async function lancarPecas(s, payload, { commit }) {
       // os de valor errado entram de novo, certos
       for (const it of comValorErrado) {
         ctx(s.page, `NF ${nf.numero} · entrada · item ${it.nItem} (${it.cProd}) relançado com valor do XML`);
-        await addStorageMovement(s, invoiceId, {
-          productId: produtos[it.nItem].id, productText: produtos[it.nItem].text, quantidade: it.quantidade, valorUnitario: it.valorUnitario,
-          warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome,
-        });
+        await entrarItem(it);
       }
       // reconfere tudo do zero
       const agora = await storageInvoiceMovements(s, invoiceId);
