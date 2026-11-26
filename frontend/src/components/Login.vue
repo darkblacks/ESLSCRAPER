@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, onUnmounted } from 'vue';
 import { api, setSession } from '../api.js';
 
 // modal = login por cima da tela (sessão caiu); reuse = id da sessão a reaproveitar (lote pausado continua nela)
@@ -13,6 +13,20 @@ const pendingId = ref('');
 const msg = ref('');
 const hint = ref('');
 const loading = ref(false);
+// Situação do envio do código pelo ESL: { tipo: 'ok' | 'aviso' | 'erro', texto }
+const envio = ref(null);
+const demorou = ref(false); // passou 1 min na tela do código: mostra dicas (spam, reenviar)
+let demoraTimer;
+const hora = () => new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function marcarEnvio(e, acao = 'enviado') {
+  if (e?.erro) envio.value = { tipo: 'erro', texto: `O ESL informou um problema ao enviar o código: “${e.erro}”. Use “Reenviar código” ou volte e entre de novo.` };
+  else if (e?.confirmado) envio.value = { tipo: 'ok', texto: `O ESL confirmou: código ${acao} às ${hora()}.` };
+  else envio.value = { tipo: 'aviso', texto: `O ESL não confirmou o envio do código (${hora()}). Se não chegar em 1 minuto, use “Reenviar código”.` };
+  demorou.value = false;
+  clearTimeout(demoraTimer);
+  demoraTimer = setTimeout(() => (demorou.value = true), 60_000);
+}
+onUnmounted(() => clearTimeout(demoraTimer));
 
 async function submitCredentials() {
   loading.value = true;
@@ -26,7 +40,8 @@ async function submitCredentials() {
     } else if (r.status === 'code_required') {
       pendingId.value = r.sessionId;
       step.value = 'code';
-      hint.value = r.message;
+      hint.value = r.envio?.mensagem || r.message;
+      marcarEnvio(r.envio);
       startCooldown(15);
     } else msg.value = r.message || 'Falha no login';
   } catch (e) {
@@ -48,10 +63,18 @@ async function resend() {
   msg.value = '';
   try {
     const r = await api.resend(pendingId.value);
-    msg.value = r.message;
-    if (r.ok) startCooldown();
+    if (r.ok) {
+      if (r.envio?.mensagem) hint.value = r.envio.mensagem;
+      marcarEnvio(r.envio || { confirmado: true }, 'reenviado');
+      startCooldown();
+    } else if (/Ainda não liberado/.test(r.message || '')) {
+      envio.value = { tipo: 'aviso', texto: `O ESL ainda não libera o reenvio: ${r.message}` };
+    } else {
+      envio.value = { tipo: 'erro', texto: `O reenvio falhou: ${r.message || 'o ESL não respondeu.'}` };
+    }
   } catch (e) {
-    msg.value = e.message;
+    envio.value = { tipo: 'erro', texto: `Não consegui pedir o reenvio ao ESL: ${e.message}` };
+    if (e.status === 401 && /Sessão/.test(e.message)) step.value = 'credentials';
   }
 }
 
@@ -93,7 +116,9 @@ async function submitCode() {
         </form>
 
         <form v-else key="code" @submit.prevent="submitCode">
-          <p class="muted small">{{ hint || 'Enviamos um código de 6 dígitos para o seu e-mail.' }} Ele expira em 10 minutos.</p>
+          <p class="muted small">{{ hint || 'Enviamos um código de 6 dígitos para o seu e-mail.' }}<template v-if="!/expira/i.test(hint)"> Ele expira em 10 minutos.</template></p>
+          <p v-if="envio" class="envio" :class="envio.tipo" role="status">{{ envio.tipo === 'ok' ? '✓ ' : envio.tipo === 'erro' ? '✗ ' : '! ' }}{{ envio.texto }}</p>
+          <p v-if="demorou && envio?.tipo !== 'erro'" class="muted small">Ainda não chegou? Confira o spam/lixo eletrônico e a aba Promoções. O código vai para o e-mail cadastrado no ESL e vale 10 minutos — use “Reenviar código”.</p>
           <label>Código de verificação
             <input v-model="code" class="code-input" inputmode="numeric" maxlength="6" pattern="\d{6}" placeholder="000000"
               autocomplete="one-time-code" required autofocus />
@@ -103,7 +128,7 @@ async function submitCode() {
             <button type="button" class="ghost" :disabled="cooldown > 0" @click="resend">
               {{ cooldown > 0 ? `Reenviar em ${cooldown}s` : 'Reenviar código' }}
             </button>
-            <button type="button" class="ghost" @click="step = 'credentials'; code = ''">Voltar</button>
+            <button type="button" class="ghost" @click="step = 'credentials'; code = ''; envio = null">Voltar</button>
           </div>
         </form>
       </Transition>

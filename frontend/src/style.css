@@ -139,6 +139,12 @@ main { padding: 22px; flex: 1; width: 100%; max-width: 1600px; margin: 0 auto; }
 .credit b { color: var(--brand2); }
 .alertbox { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--warnbg); border: 1px solid rgba(251, 191, 36, .3); color: #fde68a; font-size: 13px; display: grid; gap: 4px; }
 .alertbox b { font-weight: 500; color: #fef3c7; }
+.envio { margin: 0; padding: 8px 11px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+.envio.ok { background: var(--okbg); color: var(--ok); }
+.envio.aviso { background: var(--warnbg); color: var(--warn); }
+.envio.erro { background: var(--dangerbg); color: var(--danger); }
+.adminlink { color: var(--brand2); text-decoration: none; font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 10px; border: 1px solid var(--line2); background: rgba(127, 168, 255, .06); white-space: nowrap; }
+.adminlink:hover { background: rgba(127, 168, 255, .14); }
 @keyframes logoIn { from { opacity: 0; transform: scale(.85) rotate(-6deg); filter: blur(8px); } }
 @keyframes peek { from { transform: translateY(20px); opacity: 0; } }
 .spin { width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
@@ -230,6 +236,10 @@ label.inline { display: inline-flex; gap: 8px; align-items: center; color: var(-
 .pick-pop li { padding: 7px 9px; cursor: pointer; border-radius: 8px; font-size: 13px; transition: background .12s; }
 .pick-pop li:hover { background: rgba(47, 107, 255, .16); }
 .pick-pop li small { display: block; color: var(--muted); font-size: 11px; }
+/* lista solta no <body> (SearchPick): por cima de cartões, área de XML e tabelas; abaixo dos modais (login 200, zoom 150) */
+.pick-pop.solto { position: fixed; right: auto; min-width: 0; z-index: 120; display: flex; flex-direction: column; }
+.pick-pop.solto ul { flex: 1; min-height: 0; }
+.pick-value.on { border-color: var(--brand); }
 @keyframes popIn { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
 
 /* ---------- barra de ação (lançar) ---------- */

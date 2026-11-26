@@ -130,6 +130,24 @@ async function pageMessage(page) {
   });
 }
 
+/**
+ * O ESL mandou o código por e-mail? Lê a tela de código:
+ *  - erro: aviso de erro do ESL (classe de erro ou texto de falha), ex.: falha no envio, limite de tentativas;
+ *  - confirmado: o ESL mostra "Enviamos um código ... para vic***@gmail.com" e não há erro.
+ * Não dá para saber se o e-mail chegou na caixa de entrada — só o que o ESL informa.
+ */
+async function envioCodigo(page) {
+  const r = await page.evaluate(() => {
+    const els = [...document.querySelectorAll('.alert, .flash, .toast-message, .notice, .error, .help-block, .invalid-feedback')]
+      .filter((e) => e.innerText.trim());
+    const falha = /erro|falh|não foi possível|nao foi possivel|tente novamente|limite|bloquead|excedid|indispon/i;
+    const err = els.find((e) => /danger|error|invalid|alert-warning/i.test(e.className) || falha.test(e.innerText));
+    const p = [...document.querySelectorAll('p, span, div')].find((e) => /Enviamos um código/i.test(e.innerText) && e.children.length < 3);
+    return { erro: err ? err.innerText.trim().replace(/\s+/g, ' ').slice(0, 300) : null, hint: p ? p.innerText.trim().replace(/\s+/g, ' ').slice(0, 200) : null };
+  }).catch(() => ({ erro: null, hint: null }));
+  return { confirmado: !!r.hint && !r.erro, erro: r.erro, mensagem: r.hint, em: new Date().toISOString() };
+}
+
 // Etapa de código do ESL: /email_otp  (form POST /email_otp, input name="code" id="code", 6 dígitos)
 const OTP_PATH = '/email_otp';
 const OTP_INPUT = 'form[action="/email_otp"] #code';
@@ -210,7 +228,8 @@ async function resolveLoginState(s) {
     s.status = 'code_required';
     s.codeSelector = OTP_INPUT;
     const err = await pageMessage(page);
-    return { status: 'code_required', message: err || (await otpHint(page)) || 'Informe o código de 6 dígitos enviado por e-mail.' };
+    const envio = await envioCodigo(page);
+    return { status: 'code_required', message: err || (await otpHint(page)) || 'Informe o código de 6 dígitos enviado por e-mail.', envio };
   }
   // Fallback genérico caso o ESL mude a tela de verificação
   const codeSel = await findCodeInput(page);
@@ -262,7 +281,9 @@ export async function resendCode(s) {
     }
     await Promise.all([page.waitForLoadState('networkidle').catch(() => {}), btn.click()]);
     await page.waitForTimeout(800);
-    return { ok: true, message: (await pageMessage(page)) || (await otpHint(page)) || 'Código reenviado.' };
+    const envio = await envioCodigo(page);
+    if (envio.erro) return { ok: false, message: `O ESL não reenviou o código: ${envio.erro}`, envio };
+    return { ok: true, message: (await pageMessage(page)) || envio.mensagem || 'Código reenviado.', envio };
   });
 }
 

@@ -93,8 +93,9 @@ const TABS = [['xml', 'Lançamento de XML'], ['mnt', 'Manutenção · XML → OS
       <i />{{ conexao === 'ok' ? 'ESL conectado' : conexao === 'offline' ? 'sem backend' : 'login caiu' }}
     </span>
     <span v-if="commitEnabled" class="badge warn">gravação LIGADA</span>
-    <a v-if="!emAdmin" href="/admin" class="gear" title="Administração">⚙</a>
+    <a v-if="!emAdmin && !logado" href="/admin" class="gear" title="Administração">⚙</a>
     <template v-if="logado && !emAdmin">
+      <a href="/admin" class="adminlink" title="Administração do servidor (gravação no ESL, CORS, chave da API)">⚙ Admin</a>
       <span class="user">{{ email }}</span>
       <button class="ghost" @click="logout">Sair</button>
     </template>
