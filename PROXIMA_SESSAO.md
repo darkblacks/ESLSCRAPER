@@ -13,6 +13,12 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
 - API: `GET /api/xml/historico?lote&status&nf&de&ate&tipo`; `GET /api/xml/historico/:docKey/pedido.pdf` (captura na hora se
   não houver e houver sessão); `GET /api/xml/historico/pedidos.pdf?...` = PDF único, só notas concluídas, em ordem de
   lançamento (cabeçalhos `X-Pedidos-Incluidos` / `X-Pedidos-Faltaram`).
+- Lote das notas antigas (`LOTE-AAAAMMDD-ANT`) agora é automático: na subida do servidor e ao abrir o Histórico.
+- **Condição de pagamento na tela** (aba Peças): padrão do lote "Automática pelo XML" ou fixa; cada nota mostra/troca
+  ("pgto: …"). Preview devolve `pagamento` (deduzido do XML). Payload `condicaoPagamento`.
+- **Corrigir pedido** (nota já lançada como Pedido com o pedido sem condição): `duplicidade.corrigivel` + payload
+  `corrigirPedido` → `corrigirPedidoLancado`: grava direto; se o ESL travou o pedido, tira os itens da NF de entrada,
+  grava e vincula os mesmos itens de novo (plano salvo em `etapas.correcao`, retomável). Com OS/baixa: só avisa.
 - **Completar histórico** (botão no Histórico → `POST /api/xml/historico/completar`, em blocos de 15): notas sem lote
   ganham `LOTE-AAAAMMDD-ANT` (dia do lançamento); notas de peças concluídas com pedido e sem PDF têm o PDF capturado.
   Idempotente; para se o login cair.

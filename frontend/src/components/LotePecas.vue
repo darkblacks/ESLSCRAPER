@@ -15,6 +15,10 @@ const pad = reactive(ls('lote_pec_padroes', {
   criarOs: true, filialOs: null, responsavel: '', tipo: 'corrective', oficina: 'outsourced', comentarioOs: '',
 }));
 if (!pad.tipoNf) pad.tipoNf = 'pedido'; // padrões salvos antes desta opção: Pedido
+if (!pad.condicao) pad.condicao = 'auto'; // condição de pagamento do pedido: automática pelo XML
+const CONDICOES = ['A PRAZO', 'CARTAO CREDITO', 'A VISTA'];
+/** Condição de pagamento que vai no pedido desta nota (escolha da linha › padrão do lote › deduzida do XML). */
+const condicaoDe = (l) => l.condicao || (pad.condicao !== 'auto' ? pad.condicao : l.p?.pagamento?.condicao) || 'A PRAZO';
 watch(pad, (v) => save('lote_pec_padroes', v), { deep: true });
 
 // Conferência (só leitura) de como a tela de NF de entrada do ESL oferece o tipo
@@ -136,6 +140,8 @@ function payload(l) {
     nf, date: l.p.date, time: l.p.time,
     tipoEntrada: l.refazer ? 'pedido' : pad.tipoNf || 'pedido',
     refazerComoPedido: !!l.refazer, // lançada aqui como Avulsa → nova NF como Pedido e tira os itens da avulsa
+    corrigirPedido: !!l.corrigir, // já lançada como Pedido, mas o pedido ficou sem condição de pagamento
+    condicaoPagamento: condicaoDe(l),
     fornecedor: { id: l.fornecedorSel.id, nome: l.fornecedorSel.text },
     filial: l.filialNf || pad.filial,
     almoxarifado: { id: pad.almoxarifado.id, nome: pad.almoxarifado.text },
@@ -171,12 +177,26 @@ function lancarTudo() {
   const cad = prontas.value.reduce((a, l) => a + novas(l), 0);
   const soEstoque = prontas.value.filter((l) => destino(l) === 'estoque').length;
   const refazer = prontas.value.filter((l) => l.refazer);
+  const corrigir = prontas.value.filter((l) => l.corrigir);
   const comOs = n - soEstoque;
   if (!confirm(`Lançar ${n} NF(s) de peças (${fmt(total.value)})?\n\n${cad ? `• cadastrar ${cad} peça(s) nova(s)\n` : ''}• entrada no almoxarifado ${pad.almoxarifado.text} (todas), NF de entrada como ${pad.tipoNf === 'avulsa' ? 'AVULSA' : 'PEDIDO'}\n` +
     (comOs ? `• ${comOs} NF(s): aplicar na OS aberta de cada placa${pad.criarOs ? ' (ou criar nova)' : ''} e dar baixa\n` : '') +
     (soEstoque ? `• ${soEstoque} NF(s): só entrada no estoque (sem OS, sem baixa)\n` : '') +
-    (refazer.length ? `• ${refazer.length} NF(s) refeitas como PEDIDO: depois da NF nova conferida, os itens SAEM da NF avulsa antiga (${refazer.map((l) => 'id ' + l.p.duplicidade.refazivel.invoiceId).join(', ')})` : ''))) return;
+    (refazer.length ? `• ${refazer.length} NF(s) refeitas como PEDIDO: depois da NF nova conferida, os itens SAEM da NF avulsa antiga (${refazer.map((l) => 'id ' + l.p.duplicidade.refazivel.invoiceId).join(', ')})\n` : '') +
+    (corrigir.length ? `• ${corrigir.length} pedido(s) já lançados recebem a condição de pagamento (${corrigir.map((l) => `pedido ${l.p.duplicidade.corrigivel.pedidoNumero}: ${condicaoDe(l)}`).join(', ')}); se o ESL travar o pedido, os itens saem e voltam para a mesma NF de entrada\n` : '') +
+    `• condição de pagamento dos pedidos: ${pad.condicao === 'auto' ? 'automática pelo XML' : pad.condicao}`)) return;
   lancar(prontas.value, payload);
+}
+
+/** Já lançada como Pedido sem condição de pagamento: corrigir o pedido. */
+function corrigirPedido(l) {
+  l.corrigir = true;
+  l.estado = 'conferir';
+  l.erro = '';
+}
+function desfazerCorrigir(l) {
+  l.corrigir = false;
+  l.estado = 'bloqueada';
 }
 
 /** Nota lançada aqui como Avulsa (só entrada): refazer como Pedido. */
@@ -223,6 +243,13 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
             <template v-if="tipoEsl?.campo"> · ESL oferece: {{ tipoEsl.campo.opcoes.join(', ') }}<b v-if="!temOpcao(pad.tipoNf)" class="msg"> — sem a opção {{ pad.tipoNf === 'avulsa' ? 'Avulsa' : 'Pedido' }}!</b></template>
             <span v-else-if="tipoEsl?.erro" class="msg"> · {{ tipoEsl.erro }}</span>
           </small>
+        </label>
+        <label>Condição de pagamento do pedido
+          <select v-model="pad.condicao">
+            <option value="auto">Automática pelo XML (padrão)</option>
+            <option v-for="c in CONDICOES" :key="c" :value="c">{{ c }} (todas)</option>
+          </select>
+          <small class="muted">Automática: cartão → CARTAO CREDITO; parcelas/boleto → A PRAZO; dinheiro/PIX/débito → A VISTA. Dá para trocar em cada nota.</small>
         </label>
         <label>Filial (se o XML não indicar)
           <select v-model="pad.filial"><option value="">—</option><option v-for="f in filiais" :key="f.id" :value="f.nome">{{ f.nome }}</option></select>
@@ -275,6 +302,11 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                   <select :value="destino(l)" @change="l.destino = $event.target.value" style="max-width: 150px; margin-bottom: 4px">
                     <option value="os">aplicar em OS</option><option value="estoque">só estoque</option>
                   </select>
+                  <select :value="l.condicao || ''" @change="l.condicao = $event.target.value || null" class="block" style="max-width: 170px; margin-bottom: 4px"
+                    :title="l.p?.pagamento ? 'Pelo XML: ' + l.p.pagamento.condicao + ' (' + l.p.pagamento.motivo + ')' : 'Condição de pagamento do pedido'">
+                    <option value="">pgto: {{ pad.condicao !== 'auto' ? pad.condicao : (l.p?.pagamento?.condicao || 'A PRAZO') + ' (XML)' }}</option>
+                    <option v-for="c in CONDICOES" :key="c" :value="c">pgto: {{ c }}</option>
+                  </select>
                   <template v-if="destino(l) === 'os'">
                     <input v-if="!l.osSel" :value="l.placa" @input="mudarPlaca(l, $event.target.value)" placeholder="placa" style="max-width: 110px" />
                     <select v-if="!l.osSel && (osAbertas(l).length > 1 || (l.osManual && osAbertas(l).length))" class="block" style="max-width: 170px; margin-top: 4px" @change="escolherOs(l, $event.target.value)">
@@ -301,6 +333,16 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                   </button>
                   <small v-if="!l.refazer" class="muted block">Foi lançada como {{ l.p.duplicidade.refazivel.tipo }} (NF de entrada id {{ l.p.duplicidade.refazivel.invoiceId }}). Cria a NF como Pedido e, depois de conferida, tira os itens da avulsa.</small>
                   <small v-else class="warnc block">Será refeita como PEDIDO: os itens saem da NF avulsa id {{ l.p.duplicidade.refazivel.invoiceId }} depois que a nova estiver conferida. <a class="link" @click="desfazerRefazer(l)">cancelar</a></small>
+                </template>
+                <template v-if="l.p?.duplicidade?.corrigivel && !['lançada', 'na fila', 'lançando'].includes(l.estado)">
+                  <template v-if="l.p.duplicidade.corrigivel.comOsOuBaixa">
+                    <small class="warnc block">Pedido {{ l.p.duplicidade.corrigivel.pedidoNumero }} sem condição de pagamento, mas a nota já foi para OS/baixa: corrija no ESL à mão.</small>
+                  </template>
+                  <template v-else>
+                    <button v-if="!l.corrigir" type="button" class="ghost small" style="margin-top: 4px" @click="corrigirPedido(l)">Corrigir pedido</button>
+                    <small v-if="!l.corrigir" class="warnc block">Pedido {{ l.p.duplicidade.corrigivel.pedidoNumero }} lançado sem condição de pagamento. Corrige para {{ condicaoDe(l) }}.</small>
+                    <small v-else class="warnc block">Pedido {{ l.p.duplicidade.corrigivel.pedidoNumero }} vai receber {{ condicaoDe(l) }}. Se o ESL travar, os itens saem e voltam para a mesma NF. <a class="link" @click="desfazerCorrigir(l)">cancelar</a></small>
+                  </template>
                 </template>
                 <small v-if="l.p?.duplicidade?.retomavel" class="warnc block">incompleta antes — será retomada</small>
               </td>

@@ -298,6 +298,7 @@ app.post('/api/xml/lote/:id/cancelar', requireKnownSession, (req, res) => res.js
 // Histórico com filtros: ?tipo=pecas|servico&lote=LOTE-...&status=concluido|erro|em_andamento&nf=123&de=AAAA-MM-DD&ate=AAAA-MM-DD
 const filtrosHist = (q) => ({ tipo: q.tipo, lote: q.lote, status: q.status, nf: q.nf, de: q.de, ate: q.ate });
 app.get('/api/xml/historico', requireKnownSession, (req, res) => {
+  IMP.migrarLotesAntigos(); // notas antigas ganham LOTE-AAAAMMDD-ANT sem precisar clicar em nada
   res.json(IMP.filtrarHistorico(LEDGER.all(), filtrosHist(req.query)).map(IMP.resumoHistorico));
 });
 const enviarPdf = (res, pdf, nome) => {
@@ -341,6 +342,12 @@ app.post('/api/insert/batch', requireSession, wrap(async (req, res) => {
 const limpos = LEDGER.limparDeParaSuspeito();
 if (limpos) console.log(`[de-para] ${limpos} associação(ões) suspeita(s) de peça removida(s).`);
 
+try {
+  const n = IMP.migrarLotesAntigos(); // na subida: notas lançadas antes do ID de lote ganham LOTE-AAAAMMDD-ANT
+  if (n) console.log(`[historico] ${n} nota(s) antigas receberam lote LOTE-AAAAMMDD-ANT`);
+} catch (e) {
+  console.error('[historico] migração de lotes:', e.message);
+}
 const server = app.listen(PORT, () => console.log(`ESL scraper backend em http://localhost:${PORT} (versão ${VERSAO}, commit ${commitOn() ? 'LIGADO' : 'desligado'})`));
 // Operações do Playwright podem levar minutos: não deixa o Node cortar a conexão antes do Caddy.
 server.requestTimeout = 0;

@@ -141,15 +141,21 @@ export const loteAntigoDe = (r) => {
  *  2) notas de peças CONCLUÍDAS com pedido de compra e sem PDF → captura o PDF agora (com a sessão do ESL).
  * Faz no máximo `max` capturas por chamada (o site chama de novo até `restantes` = 0). Idempotente.
  */
-export async function completarHistorico(s, { max = 15 } = {}) {
-  const todos = L.all();
-  let lotesAtribuidos = 0;
-  for (const r of todos) {
+/** Notas sem lote (lançadas antes do ID de lote) ganham LOTE-AAAAMMDD-ANT. Automático: na subida e ao abrir o histórico. */
+export function migrarLotesAntigos() {
+  let n = 0;
+  for (const r of L.all()) {
     if (!r.lote && !(r.lotes || []).length) {
       L.marcarLote(r.docKey, loteAntigoDe(r));
-      lotesAtribuidos++;
+      n++;
     }
   }
+  return n;
+}
+
+export async function completarHistorico(s, { max = 15 } = {}) {
+  const lotesAtribuidos = migrarLotesAntigos();
+  const todos = L.all();
   const pendentes = todos
     .map(resumoHistorico)
     .filter((r) => r.tipo === 'pecas' && r.status === 'concluido' && r.pedidoId && !r.temPdf)
