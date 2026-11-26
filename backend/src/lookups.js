@@ -199,6 +199,29 @@ export async function findStorageInvoices(s, tipo, { numero, issuerId }) {
     }));
 }
 
+/** Cabeçalho do pedido de compra (sequence_code = nº do pedido, que vira o nº da NF de entrada com pedido). */
+export async function getPurchaseOrder(s, id) {
+  const o = await apiGet(s, `/purchase/order/products/${id}.json`);
+  return { id: o.id, numero: o.sequence_code, status: o.status, fornecedorId: o.provider_id, filialId: o.corporation_id, comentario: o.comments || '' };
+}
+
+/** Itens do pedido de compra. */
+export async function purchaseOrderItems(s, id) {
+  const r = await apiGet(s, `/purchase/order/${id}/order_items?page=1&per=200`);
+  return arr(r).map((x) => ({
+    id: x.id, codigo: x.purchase_product_code, nome: x.purchase_product_name, quantidade: Number(x.amount),
+    recebido: Number(x.amount_received || 0), valorUnitario: Number(x.unitary_value), total: Number(x.total_value),
+  }));
+}
+
+/** NF de entrada (produtos) já ligada ao pedido de compra, se houver. */
+export async function findStorageInvoiceByOrder(s, issuerId, orderId) {
+  const q = qs({ 'search[storage_invoices][issuer_id]': issuerId, per: 50 });
+  const list = arr(await apiGet(s, `/storage/invoice/products.json?${q}`).catch(() => []));
+  const x = list.find((i) => String(i.purchase_order_id) === String(orderId));
+  return x ? { id: x.id, numero: x.number, tipo: x.invoice_type_formatted } : null;
+}
+
 export async function storageInvoiceMovements(s, id) {
   const r = await apiGet(s, `/storage/invoices/${id}/movements?page=1&per=200`);
   return arr(r).map((m) => ({ id: m.id, codigo: m.purchase_product_code, nome: m.purchase_product_name, quantidade: Number(m.amount), valorUnitario: Number(m.unitary_value), total: Number(m.total_value), local: m.locale }));
