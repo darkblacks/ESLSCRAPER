@@ -166,6 +166,26 @@ test('refazer como Pedido: nota lançada aqui como Avulsa (só entrada) pode ser
   assert.equal(ref.refazer.invoiceId, 143540);
 });
 
+test('tipo da NF de entrada pelo JSON real do detalhe (sem invoice_type_formatted)', async () => {
+  const { tipoDaEntrada } = await import('../src/lancamento-pecas.js');
+  assert.equal(tipoDaEntrada({ invoice_type: 'order', purchase_order_id: 23738, purchase_invoice_id: null }), 'Pedido');
+  assert.equal(tipoDaEntrada({ invoice_type: 'single', purchase_order_id: null, purchase_invoice_id: null }), 'Avulsa');
+  assert.equal(tipoDaEntrada({ invoice_type: null, purchase_order_id: null, purchase_invoice_id: null }), 'Avulsa');
+  assert.equal(tipoDaEntrada({ invoice_type: 'purchase_invoice', purchase_order_id: null, purchase_invoice_id: 9 }), 'Nota de Compra');
+  assert.equal(tipoDaEntrada({ invoice_type_formatted: 'Avulsa' }), 'Avulsa');
+  assert.equal(tipoDaEntrada(null), null);
+});
+
+test('refazer como Pedido: reconhece a avulsa pelo JSON real do detalhe (sem o texto "Avulsa")', async () => {
+  const nf = nfDe('7009');
+  semearNota(nf, 143541);
+  const s = sessaoLeitura({ '/storage/invoices/143541/movements': movsDe(nf), '/storage/invoice/products/143541.json': { id: 143541, invoice_type: 'single', purchase_order_id: null, purchase_invoice_id: null }, '/storage/invoice/products.json': [{ id: 143541, number: '7009', invoice_type_formatted: 'Avulsa' }] });
+  const r = await checkPartsDuplicate(s, nf, 1);
+  assert.deepEqual(r.refazivel, { invoiceId: 143541, tipo: 'Avulsa' });
+  const ref = await checkPartsDuplicate(s, nf, 1, { refazer: true });
+  assert.equal(ref.bloqueado, false, ref.motivos.join(' '));
+});
+
 test('refazer como Pedido: NÃO vale se já é Pedido, se teve OS/baixa, ou se existe outra NF de entrada da nota', async () => {
   const a = nfDe('7002'); semearNota(a, 500);
   const jaPedido = sessaoLeitura({ '/storage/invoices/500/movements': movsDe(a), '/storage/invoice/products/500.json': { id: 500, invoice_type_formatted: 'Pedido' } });

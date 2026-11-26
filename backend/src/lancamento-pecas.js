@@ -36,7 +36,22 @@ const legacy = () => {
 export async function tipoEntrada(s, invoiceId) {
   if (!invoiceId) return null;
   const x = await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null);
-  return x?.invoice_type_formatted || x?.invoice_type || null;
+  return tipoDaEntrada(x);
+}
+
+/**
+ * Tipo legível da NF de entrada a partir do JSON do ESL. O JSON do detalhe (/storage/invoice/products/:id.json) NÃO traz
+ * invoice_type_formatted (só a lista traz): traz invoice_type cru ("order" = Pedido) e os vínculos purchase_order_id /
+ * purchase_invoice_id. Sem pedido e sem nota de compra = Avulsa (conferido no ESL em 26/11/2026).
+ */
+export function tipoDaEntrada(x) {
+  if (!x) return null;
+  if (x.invoice_type_formatted) return x.invoice_type_formatted;
+  const t = String(x.invoice_type || '').toLowerCase();
+  if (x.purchase_order_id || t === 'order') return 'Pedido';
+  if (x.purchase_invoice_id || /invoice/.test(t)) return 'Nota de Compra';
+  if ('purchase_order_id' in x || 'invoice_type' in x) return 'Avulsa';
+  return null;
 }
 
 /** NFs de entrada do mesmo fornecedor cujo comentário cita o nº/chave da nota (lançadas a partir de pedido, à mão). */
