@@ -11,6 +11,9 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
 - Frete/desconto travados na NF com pedido → segue e avisa (passo ok=false).
 - "Conferir na tela do ESL" agora lê o menu da lista (Com Nota de Compra / Com Pedido de Compra / Avulsa).
 - NF 35029 (EMG) está no ESL como Avulsa (id 143540) → candidata a "Refazer como Pedido".
+- Confirmações do ESL (SweetAlert 8): `swalConfirmar` clica "Sim/OK" e, se a janela não fechar, dá **Enter** no botão;
+  `fecharAvisosSwal` fecha o aviso de sucesso que vem depois (erro → para). Exclusão de item da NF de entrada: confirma
+  "Tem certeza que deseja excluir o item?", fecha o aviso, aceita `confirm()` nativo e **confere que a linha sumiu**.
 - **Ainda não rodado com gravação.** Validar com UMA nota, com autorização.
 
 ## Estado atual

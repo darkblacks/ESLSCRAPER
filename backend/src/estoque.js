@@ -21,7 +21,7 @@
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
 import { withPage } from './esl.js';
-import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors } from './ui.js';
+import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal } from './ui.js';
 
 const withShot = async (page, fn) => {
   try {
@@ -402,19 +402,41 @@ export async function deleteStorageMovement(s, invoiceId, mov) {
       const excluir = page.locator('.dropdown-menu:visible a:has-text("Excluir"), .dropdown-menu:visible button:has-text("Excluir")').first();
       await excluir.waitFor({ state: 'visible', timeout: 5000 });
       await capture(page, `antes de excluir ${alvo.codigo} ${alvo.qtd} × ${alvo.unit}`);
-      await excluir.click();
-      // confirma apenas a pergunta de exclusão de item
-      const t = await page.waitForFunction(() => {
-        const S = window.Swal || window.swal;
-        return S && S.isVisible() ? S.getPopup().innerText.replace(/\s+/g, ' ').trim() : null;
-      }, null, { timeout: 8000 }).then((h) => h.jsonValue());
-      if (!/certeza.*excluir o item/i.test(t)) {
-        await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
-        throw new Error(`Pergunta inesperada ao excluir (cancelada): "${t}"`);
+      const contar = () => page.evaluate((a) => [...document.querySelectorAll('table tbody tr')].filter((r) => r.offsetParent !== null).filter((r) => {
+        const c = [...r.querySelectorAll('td')].map((td) => td.innerText.trim().replace(/\./g, ''));
+        return c[0] === a.codigo && c.includes(a.qtd) && c.includes(a.unit);
+      }).length, alvo);
+      const linhasAntes = await contar();
+      // confirm() nativo também é aceito — sem isso o Playwright recusaria e a exclusão não aconteceria
+      const onDialog = (d) => (/exclu/i.test(d.message()) ? d.accept() : d.dismiss()).catch(() => {});
+      page.on('dialog', onDialog);
+      try {
+        await excluir.click();
+        // a tela de confirmação SEMPRE aparece: "Tem certeza que deseja excluir o item?" → Sim (clique, e Enter se não fechar)
+        const t = await page.waitForFunction(() => {
+          const S = window.Swal || window.swal;
+          return S && S.isVisible() ? S.getPopup().innerText.replace(/\s+/g, ' ').trim() : null;
+        }, null, { timeout: 8000 }).then((h) => h.jsonValue()).catch(() => null);
+        if (t !== null) {
+          if (!/certeza.*exclu/i.test(t)) {
+            await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
+            throw new Error(`Pergunta inesperada ao excluir (cancelada): "${t}"`);
+          }
+          if (!(await swalConfirmar(page))) throw new Error(`O ESL não aceitou a confirmação da exclusão (nem com Enter): "${t}"`);
+        }
+        // depois vem o aviso "excluído com sucesso" → OK/Enter (erro aqui = não excluiu)
+        await fecharAvisosSwal(page, 4000);
+      } finally {
+        page.off('dialog', onDialog);
       }
-      await page.evaluate(() => (window.Swal || window.swal).clickConfirm());
-      await page.waitForTimeout(1500);
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForTimeout(800);
+      // confere na tela: a linha tem que ter sumido (se havia mais de uma igual, uma a menos)
+      const linhasDepois = await contar();
+      if (linhasDepois >= linhasAntes) {
+        await capture(page, `exclusão NÃO confirmada ${alvo.codigo}`);
+        throw new Error(`Cliquei em excluir e confirmei, mas a linha ${alvo.codigo} ${alvo.qtd} × ${alvo.unit} continua na NF de entrada.`);
+      }
       await capture(page, `excluído ${alvo.codigo} ${alvo.qtd} × ${alvo.unit}`);
     })
   );
