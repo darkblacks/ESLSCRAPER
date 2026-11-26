@@ -373,6 +373,15 @@ export async function saveMainForm(page, urlRegex) {
 }
 
 /** Abre uma aba da página pelo texto (ex.: "Serviços", "Produtos e Peças", "Entrada no Estoque"). */
+/** Espera as tabelas do ESL saírem do estado "carregando" (a camada .loading-sm-container cobre os botões). */
+export async function esperarTabelaPronta(page, ms = 10_000) {
+  await page.waitForFunction(() => ![...document.querySelectorAll('.vue-paginated-table')]
+    .some((t) => t.offsetParent !== null && /loading/.test(t.className) && t.querySelector('.loading, .spinner, .fa-spin, .loading-sm') !== null)
+    && ![...document.querySelectorAll('.vue-paginated-table.loading-sm-container .loading-sm, .loading-sm-container > .loading')].some((x) => x.offsetParent !== null),
+  null, { timeout: ms, polling: 150 }).catch(() => {});
+  await page.waitForTimeout(150);
+}
+
 /** Espera a tabela (de uma aba) ter linhas carregadas — o ESL preenche por AJAX depois que a tela abre. */
 export async function esperarTabela(page, seletor = 'table tbody tr', ms = 8000) {
   await page.waitForFunction((sel) => [...document.querySelectorAll(sel)].some((tr) => tr.offsetParent !== null && tr.querySelector('td')),

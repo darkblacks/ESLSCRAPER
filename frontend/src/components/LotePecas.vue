@@ -317,7 +317,10 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                     <small v-else class="muted block">{{ placaFmt(l.placa) ? 'sem OS aberta para esta placa' + (pad.criarOs ? ' — cria nova' : '') : 'informe a placa' }}</small>
                   </template>
                 </template>
-                <span v-else>{{ l.resultado?.somenteEntrada ? 'só estoque' : l.resultado?.osNumero ? 'OS ' + l.resultado.osNumero : destino(l) === 'estoque' ? 'só estoque' : l.placa }}</span>
+                <template v-else>
+                  <span>{{ l.resultado?.somenteEntrada ? 'só estoque' : l.resultado?.osNumero ? 'OS ' + l.resultado.osNumero : destino(l) === 'estoque' ? 'só estoque' : l.placa }}</span>
+                  <small v-if="l.p && pad.tipoNf !== 'avulsa'" class="muted block">pgto: {{ condicaoDe(l) }}</small>
+                </template>
               </td>
               <td>
                 <span class="badge" :class="estado(l)[0]">{{ estado(l)[1] }}</span>
@@ -355,6 +358,13 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                   <label>Fornecedor no ESL<SearchPick v-model="l.fornecedorSel" :search="searchPeople" /></label>
                   <label>Filial desta NF
                     <select v-model="l.filialNf"><option value="">usar padrão</option><option v-for="f in filiais" :key="f.id" :value="f.nome">{{ f.nome }}</option></select>
+                  </label>
+                  <label>Condição de pagamento do pedido
+                    <select :value="l.condicao || ''" @change="l.condicao = $event.target.value || null" :disabled="['na fila', 'lançando', 'lançada'].includes(l.estado)">
+                      <option value="">{{ pad.condicao !== 'auto' ? pad.condicao + ' (padrão do lote)' : (l.p?.pagamento?.condicao || 'A PRAZO') + ' (pelo XML)' }}</option>
+                      <option v-for="c in CONDICOES" :key="c" :value="c">{{ c }}</option>
+                    </select>
+                    <small v-if="l.p?.pagamento" class="muted">XML: {{ l.p.pagamento.motivo }}</small>
                   </label>
                   <label v-if="destino(l) === 'os'">OS específica
                     <select :value="l.osSel?.id ?? ''" @change="osEspecifica(l, $event.target.value)">
