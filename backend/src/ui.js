@@ -33,7 +33,23 @@ export async function open(page, route) {
 
 /** Seleciona um valor num select2 pelo id exato (cria a <option> se ela vier por AJAX). */
 export async function setSelect2(page, name, id, text, scope = '') {
-  const ok = await page.evaluate(
+  let ok;
+  try {
+    ok = await setSelect2Injetando(page, name, id, text, scope);
+  } catch (e) {
+    // o handler do ESL precisa dos dados completos do resultado da busca → escolhe digitando, como uma pessoa
+    if (!/Cannot read propert|undefined|null/i.test(e.message)) throw e;
+    await page.evaluate((sel) => { const $ = window.jQuery; $(sel).first().val(null).trigger('change.select2'); }, `${scope} [name="${name}"]`.trim()).catch(() => {});
+    const termo = String(text || id).split(' - ')[0].trim();
+    const r = await select2Pesquisar(page, name, termo, String(text || id), scope);
+    if (String(r.valor) !== String(id)) throw new Error(`No campo ${name} a busca por "${termo}" escolheu outro registro (id ${r.valor}, esperado ${id}).`);
+    return;
+  }
+  if (!ok) throw new Error(`Campo não encontrado: ${name}`);
+}
+
+async function setSelect2Injetando(page, name, id, text, scope) {
+  return page.evaluate(
     ({ name, id, text, scope }) => {
       const $ = window.jQuery;
       const el = $(`${scope} [name="${name}"]`.trim()).first();
@@ -45,7 +61,61 @@ export async function setSelect2(page, name, id, text, scope = '') {
     },
     { name, id: String(id), text: String(text || id), scope }
   );
-  if (!ok) throw new Error(`Campo não encontrado: ${name}`);
+}
+
+/**
+ * Escolhe num select2 com busca AJAX como uma pessoa: clica no campo, digita o termo, espera os resultados do ESL e
+ * clica no que bate (pelo texto exato ou, se não houver, pelo início do texto). Use quando o ESL precisa dos dados
+ * completos do resultado (ex.: "Pedido de Compra" na NF de entrada: o handler lê campos que só vêm da busca — injetar
+ * a opção com setSelect2 quebra com "Cannot read properties of undefined (reading 'id')").
+ */
+export async function select2Pesquisar(page, name, termo, textoEsperado, scope = '') {
+  const sel = `${scope} [name="${name}"]`.trim();
+  await page.waitForSelector(sel, { state: 'attached', timeout: 10_000 });
+  // abre o select2 (o <select> fica escondido; o clique é no container irmão)
+  const aberto = await page.evaluate((sel) => {
+    const $ = window.jQuery;
+    const el = $(sel).first();
+    if (!el.length || !el.data('select2')) return false;
+    el.select2('open');
+    return true;
+  }, sel);
+  if (!aberto) {
+    const cont = page.locator(`${sel} + .select2, ${sel} + .select2-container`).first();
+    await cont.locator('.select2-selection').click();
+  }
+  const busca = page.locator('.select2-container--open .select2-search__field, .select2-drop-active input.select2-input').first();
+  await busca.waitFor({ state: 'visible', timeout: 5000 });
+  await busca.fill('');
+  await busca.type(String(termo), { delay: 60 });
+  const alvo = String(textoEsperado ?? termo).trim();
+  // espera os resultados da busca (sem "carregando…")
+  const handle = await page.waitForFunction(({ alvo, termo }) => {
+    const ops = [...document.querySelectorAll('.select2-container--open .select2-results__option, .select2-drop-active .select2-result')]
+      .filter((o) => o.offsetParent !== null);
+    if (!ops.length || ops.some((o) => /loading|carregando|buscando/i.test(o.className + ' ' + o.innerText))) return null;
+    const txt = (o) => o.innerText.replace(/\s+/g, ' ').trim();
+    const ok = ops.filter((o) => !/select2-results__message|select2-no-results/.test(o.className));
+    if (!ok.length) return { nenhum: ops.map(txt).join(' | ') };
+    const i = ok.findIndex((o) => txt(o) === alvo);
+    let j = i >= 0 ? i : ok.findIndex((o) => txt(o).startsWith(alvo + ' ') || txt(o).startsWith(alvo + ' -'));
+    if (j < 0) { const k = ok.filter((o) => txt(o) === termo || txt(o).startsWith(termo + ' ')); if (k.length === 1) j = ok.indexOf(k[0]); } // só se for único
+    if (j < 0) return { semMatch: ok.map(txt).slice(0, 10).join(' | ') };
+    ok.forEach((o) => o.removeAttribute('data-esl-opt'));
+    ok[j].setAttribute('data-esl-opt', '1');
+    return { ok: txt(ok[j]) };
+  }, { alvo, termo: String(termo).trim() }, { timeout: 15_000, polling: 300 }).catch(() => null);
+  const r = handle ? await handle.jsonValue() : null;
+  if (!r || !r.ok) {
+    await page.keyboard.press('Escape').catch(() => {});
+    throw new Error(`Não achei "${alvo}" na busca do campo ${name}` + (r?.nenhum ? ` (ESL respondeu: ${r.nenhum})` : r?.semMatch ? ` (resultados: ${r.semMatch})` : ' (a busca não respondeu)') + '.');
+  }
+  await page.locator('[data-esl-opt="1"]').first().hover().catch(() => {});
+  await page.locator('[data-esl-opt="1"]').first().click();
+  await page.waitForTimeout(800); // o ESL carrega os dados do item escolhido
+  const valor = await page.$eval(sel, (e) => e.value).catch(() => '');
+  if (!valor) throw new Error(`Cliquei em "${r.ok}" mas o campo ${name} ficou vazio.`);
+  return { valor, texto: r.ok };
 }
 
 /** Seleciona uma opção estática pelo texto (ex.: filial "TRANSMASSA - SBC"). Devolve o value escolhido. */

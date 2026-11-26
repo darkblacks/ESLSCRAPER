@@ -21,7 +21,7 @@
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
 import { withPage } from './esl.js';
-import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal } from './ui.js';
+import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar } from './ui.js';
 
 const withShot = async (page, fn) => {
   try {
@@ -200,7 +200,12 @@ export async function createStorageInvoiceFromOrder(s, o) {
       const modal = page.locator('#storage-invoice-modal');
       await modal.waitFor({ state: 'visible', timeout: 10_000 });
       await page.waitForTimeout(300);
-      await setSelect2(page, 'storage_invoice_product[purchase_order_id]', o.orderId, o.orderText, '#storage-invoice-modal');
+      // escolhe o pedido pela busca do próprio ESL (digita o nº e clica no resultado): o ESL precisa dos dados completos
+      // do pedido que vêm da busca — injetar só id/texto quebra o handler dele (loadPurchaseOrderElements)
+      const esc = await select2Pesquisar(page, 'storage_invoice_product[purchase_order_id]', o.orderText, o.orderText, '#storage-invoice-modal');
+      if (String(esc.valor) !== String(o.orderId)) {
+        throw new Error(`Na busca do pedido ${o.orderText} o ESL trouxe outro pedido (id ${esc.valor}, esperado ${o.orderId}). Nada foi salvo.`);
+      }
       await page.waitForTimeout(500);
       await capture(page, `pedido ${o.orderText} escolhido, antes de salvar a NF de entrada`);
       const re = /\/storage\/invoice\/products\/(\d+)\/edit/;
