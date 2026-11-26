@@ -10,7 +10,7 @@ import {
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
 } from './lookups.js';
-import { createPart, createStorageInvoice, linkOrderItem, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
+import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
@@ -416,9 +416,34 @@ export async function lancarPecas(s, payload, { commit }) {
 
     // NF com pedido: os itens entram pelo vínculo do item do pedido (🔗 › "Deseja vincular este produto?"), como à mão;
     // NF avulsa: pelo "Novo Item" da Entrada no Estoque
-    const comPedido = !!(await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null))?.purchase_order_id;
+    const pedidoDaNf = (await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null))?.purchase_order_id || null;
+    const comPedido = !!pedidoDaNf;
+    /** NF com pedido: tenta o vínculo rápido (mesma chamada do botão "Sim" do ESL); se não der, faz pela tela. */
+    const vincular = async (it) => {
+      const cod = norm(codigoDe(produtos[it.nItem], it));
+      const doPedido = (await purchaseOrderItems(s, pedidoDaNf)).find((x) => norm(x.codigo) === cod && Math.abs(x.quantidade - Number(it.quantidade)) < 0.001);
+      if (doPedido && doPedido.recebido < doPedido.quantidade - 0.0001) {
+        const t0 = Date.now();
+        const r = await linkOrderItemRapido(s, invoiceId, { orderItemId: doPedido.id, quantidade: it.quantidade, warehouseId: almoxarifado.id });
+        if (r.ok || r.talvez) {
+          // confere pela API (o ESL pode processar em segundo plano): a Qtde Recebida tem que subir
+          for (let t = 0; t < 10; t++) {
+            const agora = (await purchaseOrderItems(s, pedidoDaNf)).find((x) => x.id === doPedido.id);
+            if (agora && agora.recebido > doPedido.recebido + 0.0001) {
+              console.log(`[tempo] ${((Date.now() - t0) / 1000).toFixed(1)}s — vínculo rápido item ${it.nItem} (${it.cProd})`);
+              return;
+            }
+            await new Promise((ok) => setTimeout(ok, 1000));
+          }
+          // pediu e não confirmou: NÃO tenta de novo pela tela (poderia vincular duas vezes) — a conferência decide
+          throw new Error(`Vínculo do item ${it.nItem} enviado ao ESL, mas a Qtde Recebida não mudou em 10 s. Lance de novo para conferir.`);
+        }
+        console.log(`[tempo] vínculo rápido indisponível (${r.motivo}) — item ${it.nItem} pela tela`);
+      }
+      return linkOrderItem(s, invoiceId, { codigo: codigoDe(produtos[it.nItem], it), quantidade: it.quantidade, warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome });
+    };
     const entrarItem = (it) => comPedido
-      ? linkOrderItem(s, invoiceId, { codigo: codigoDe(produtos[it.nItem], it), quantidade: it.quantidade, warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome })
+      ? vincular(it)
       : addStorageMovement(s, invoiceId, {
           productId: produtos[it.nItem].id, productText: produtos[it.nItem].text, quantidade: it.quantidade, valorUnitario: it.valorUnitario,
           icms: it.icms, ipi: it.ipi, warehouseId: almoxarifado.id, warehouseText: almoxarifado.nome,

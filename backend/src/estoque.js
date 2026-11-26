@@ -259,6 +259,37 @@ export async function createStorageInvoice(s, h) {
 }
 
 /**
+ * Vínculo RÁPIDO do item do pedido: faz no ESL exatamente o que o "Sim" da janela "Deseja vincular este produto?" faz —
+ * o código do ESL (link_order_item_with_warehouse → actionLinkOrderItemStorageMovements) chama
+ *   _(namespacedUrlFor('/storage/invoice/products/:id/link_order_items')).postJSON({ data: { purchase_order_item_id,
+ *     amount_received: <valor do campo, ex. "328,000">, warehouse_id } })
+ * Aqui a mesma função do ESL é chamada na tela já aberta, sem janela/busca/cliques (lido no JS do ESL em 26/11/2026).
+ * Só usa quando a quantidade é < 1000 (o campo da tela não tem separador de milhar nesse caso — formato idêntico).
+ * Devolve { ok:true } | { ok:false, motivo } — quem chama cai no caminho pela tela se não der.
+ */
+export async function linkOrderItemRapido(s, invoiceId, it) {
+  if (!(Number(it.quantidade) > 0 && Number(it.quantidade) < 1000)) return { ok: false, motivo: 'quantidade fora da faixa do modo rápido' };
+  return withPage(s, async (page) => {
+    if (!/eslcloud\.com\.br\/storage\/invoice\/products\//.test(page.url())) await open(page, `/storage/invoice/products/${invoiceId}/edit`);
+    const r = await page.evaluate(({ invoiceId, data }) => new Promise((res) => {
+      try {
+        if (typeof window.namespacedUrlFor !== 'function' || !window._ || !window._.prototype) return res({ ok: false, motivo: 'funções do ESL indisponíveis na tela' });
+        const url = window.namespacedUrlFor(`/storage/invoice/products/${invoiceId}/link_order_items`);
+        window._(url).postJSON({
+          data,
+          success: (_r, _st, xhr) => res({ ok: true, status: xhr?.status }),
+          error: (xhr) => res({ ok: false, motivo: `ESL respondeu HTTP ${xhr?.status}: ${String(xhr?.responseText || '').replace(/\s+/g, ' ').slice(0, 200)}` }),
+        });
+        setTimeout(() => res({ ok: false, motivo: 'sem resposta do ESL em 20 s', talvez: true }), 20_000);
+      } catch (e) {
+        res({ ok: false, motivo: e.message });
+      }
+    }), { invoiceId, data: { purchase_order_item_id: it.orderItemId, amount_received: brNum(it.quantidade, 3), warehouse_id: it.warehouseId } });
+    return r;
+  });
+}
+
+/**
  * Entrada de UM item do pedido numa NF de entrada COM PEDIDO (como no ESL à mão): aba "Itens do Pedido" › botão 🔗 da linha
  * → janela "Deseja vincular este produto?" (SweetAlert) com Almoxarifado (select2 #order_item_warehouse) e Qtde Recebida
  * (#amount_received) → Sim (clique; Enter se não fechar) → aviso → confere que a Qtde Recebida da linha subiu.

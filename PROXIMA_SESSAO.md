@@ -20,6 +20,14 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
   → Sim. `linkOrderItem` faz isso e confere a Qtde Recebida. NF avulsa continua com "Novo Item".
 - Busca do pedido no modal mostra "Nº Pedido:4121 FORNECEDOR" — o pedido é escolhido digitando (o ESL precisa dos dados
   completos do resultado; injetar a opção quebrava com "reading 'id'").
+- **Modo rápido (lido no JS do ESL)**: cada registro é um `Record.Base` gravado por `_(namespacedUrlFor(path)).postJSON({data:{<nome>: campos}})`
+  (PATCH para alterar, DELETE para excluir). Caminhos: `purchase_order_item` → /purchase/order/:order_id/order_items;
+  `storage_movement` → /storage/invoices/:invoice_id/movements e /purchase/storage/withdrawals/:withdrawal_id/movements;
+  `fleet_service_order_part` → /fleet/service_orders/:id/parts; vínculo do item do pedido →
+  POST /storage/invoice/products/:id/link_order_items {purchase_order_item_id, amount_received "328,000", warehouse_id}.
+  Já usado: vínculo rápido (`linkOrderItemRapido`, qtde < 1000, confere pela API; falha de envio → caminho pela tela).
+  Próximos: itens do pedido, peças na OS, itens da baixa e exclusão pelo mesmo caminho — antes, capturar o envio real
+  da tela (formato dos números) para copiar idêntico.
 - **Ainda não rodado com gravação.** Validar com UMA nota, com autorização.
 
 ## Estado atual
