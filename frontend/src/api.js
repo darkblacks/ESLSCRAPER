@@ -60,6 +60,21 @@ async function call(method, path, body) {
 
 const q = (o) => '?' + new URLSearchParams(Object.entries(o).filter(([, v]) => v)).toString();
 
+/** Baixa um PDF do backend (com chave e sessão nos cabeçalhos) → { blob, incluidos, faltaram }. */
+async function pdf(path) {
+  const res = await fetch(conexaoCfg.value.url + path, {
+    headers: { 'X-API-Key': conexaoCfg.value.key, ...(sessionId.value ? { 'X-Session-Id': sessionId.value } : {}) },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && data.code === 'api_key') chaveInvalida.value = true;
+    else if (res.status === 401 && sessionId.value) pedirLogin(data.error || 'Sua sessão terminou. Entre de novo.');
+    throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { data, status: res.status });
+  }
+  const faltaram = decodeURIComponent(res.headers.get('X-Pedidos-Faltaram') || '');
+  return { blob: await res.blob(), incluidos: Number(res.headers.get('X-Pedidos-Incluidos') || 0), faltaram };
+}
+
 /** Chamadas do painel de administração do servidor: usa a sessão do ESL já logada (X-Session-Id), sem senha extra. */
 export async function adminCall(method, body, url = conexaoCfg.value.url) {
   const res = await fetch(url + '/api/admin/config', {
@@ -107,5 +122,8 @@ export const api = {
   loteStatus: (id) => call('GET', `/api/xml/lote/${id}`),
   loteTelas: (id, ref) => call('GET', `/api/xml/lote/${id}/telas/${ref}`),
   loteCancel: (id) => call('POST', `/api/xml/lote/${id}/cancelar`),
-  xmlHistorico: (tipo) => call('GET', '/api/xml/historico' + q({ tipo })),
+  xmlHistorico: (filtros = {}) => call('GET', '/api/xml/historico' + q(typeof filtros === 'string' ? { tipo: filtros } : filtros)),
+  // PDF do pedido de compra de uma nota / de todas as notas concluídas dos filtros (Imprimir Tudo)
+  pedidoPdf: (docKey) => pdf(`/api/xml/historico/${encodeURIComponent(docKey)}/pedido.pdf`),
+  pedidosPdf: (filtros = {}) => pdf('/api/xml/historico/pedidos.pdf' + q(filtros)),
 };

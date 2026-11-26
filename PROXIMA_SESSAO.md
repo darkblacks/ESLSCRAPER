@@ -2,6 +2,20 @@
 
 _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
 
+## 26/11/2026 — Impressão dos pedidos de compra + ID do lote
+
+- **ID do lote** `LOTE-AAAAMMDD-XXXX` criado a cada envio (`L.novoLoteId`, em `startBatch` e nas rotas de lançamento
+  avulso); cada nota guarda `lote` (último) e `lotes` (todos). Aparece ao lado do progresso do lote e no Histórico.
+- **Imprimir do ESL** = `window.open('/purchase/order/products/print?ids=<pedido>')`: página HTML que chama `print()` ao
+  carregar; UM pedido por vez (lista de ids só imprime o 1º). O robô abre essa página numa aba própria da mesma sessão,
+  com `window.print` desligado, e salva `page.pdf` (mídia print) em `data/pedidos/<id>.pdf`. Etapa `impressao` no
+  histórico. Falha não derruba o lançamento (passo "Impressão do pedido" com ok=false). Precisa de HEADLESS=true.
+- API: `GET /api/xml/historico?lote&status&nf&de&ate&tipo`; `GET /api/xml/historico/:docKey/pedido.pdf` (captura na hora se
+  não houver e houver sessão); `GET /api/xml/historico/pedidos.pdf?...` = PDF único, só notas concluídas, em ordem de
+  lançamento (cabeçalhos `X-Pedidos-Incluidos` / `X-Pedidos-Faltaram`).
+- Site (Histórico): filtros, coluna Lote (clique filtra), "Imprimir" por nota e "Imprimir Tudo"; PDF num iframe fora da tela
+  + `contentWindow.print()` (se o navegador bloquear, abre o PDF numa aba).
+
 ## 26/11/2026 — NF de entrada como Pedido: pelo Pedido de Compra
 
 - A tela `/storage/invoice/products/new` **não tem campo de tipo**: tudo salvo por ela fica "Avulsa" (conferido no ESL).

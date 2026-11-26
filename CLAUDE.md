@@ -35,6 +35,8 @@ Automação do ESL Cloud da Transmassa (`https://transmassa.eslcloud.com.br`) vi
 | `src/nfe.js`, `src/nfse.js` | parsing de XML (NF-e 4.00; NFS-e Nacional/ABRASF/Paulistana) |
 | `src/os.js`, `src/estoque.js`, `src/lookups.js`, `src/ui.js` | telas do ESL (formulários, select2, modais) |
 | `src/manutencao.js` | módulo antigo XML→OS (aba Manutenção) |
+| `src/impressao.js` | PDF do pedido de compra (Ações › Imprimir do ESL) capturado em aba própria; filtros do histórico; PDF único |
+| `src/pdf.js` | junta PDFs do Chromium (xref clássica) sem biblioteca externa |
 | `src/rate-limit.js` | limitador por IP em memória |
 | `test/*.test.js` | testes offline (`npm test`); `test/browser.smoke.js` (Chromium; `--esl` abre só a tela de login) |
 

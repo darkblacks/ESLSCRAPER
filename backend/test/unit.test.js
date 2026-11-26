@@ -240,3 +240,52 @@ test('NF-e: lê as formas de pagamento (pag/detPag) com o tipo em 2 dígitos', (
   assert.ok(Array.isArray(nf.pagamentos));
   for (const p of nf.pagamentos) assert.ok(p.tipo === null || /^\d{2}$/.test(p.tipo));
 });
+
+/* ---------- impressão dos pedidos: ID de lote e PDF único ---------- */
+// PDF mínimo no mesmo formato do Chromium (xref clássica), para testar o juntador sem navegador
+function pdfMinimo(texto, paginas = 1) {
+  const objs = [];
+  const kids = [];
+  objs[1] = '<</Type /Catalog /Pages 2 0 R>>';
+  for (let i = 0; i < paginas; i++) {
+    const conteudo = `BT /F1 12 Tf 50 700 Td (${texto} p${i + 1}) Tj ET`;
+    const pag = 3 + i * 2;
+    objs[pag] = `<</Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${pag + 1} 0 R /Resources <</Font <</F1 <</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>>>>>>>`;
+    objs[pag + 1] = `<</Length ${conteudo.length}>>\nstream\n${conteudo}\nendstream`;
+    kids.push(`${pag} 0 R`);
+  }
+  objs[2] = `<</Type /Pages /Count ${paginas} /Kids [${kids.join(' ')}]>>`;
+  let out = '%PDF-1.4\n';
+  const off = [];
+  for (let n = 1; n < objs.length; n++) { off[n] = out.length; out += `${n} 0 obj\n${objs[n]}\nendobj\n`; }
+  const x = out.length;
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n` + off.slice(1).map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer\n<</Size ${objs.length} /Root 1 0 R>>\nstartxref\n${x}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+test('PDF único: junta os pedidos na ordem, com todas as páginas', async () => {
+  const { mesclarPdfs, contarPaginas } = await import('../src/pdf.js');
+  const a = pdfMinimo('PEDIDO 4107', 1);
+  const b = pdfMinimo('PEDIDO 4121', 2);
+  assert.equal(contarPaginas(a), 1);
+  assert.equal(contarPaginas(b), 2);
+  const m = mesclarPdfs([a, b, a]);
+  assert.equal(m.subarray(0, 5).toString(), '%PDF-');
+  assert.equal(contarPaginas(m), 4);
+  const txt = m.toString('latin1');
+  assert.ok(txt.indexOf('PEDIDO 4107 p1') < txt.indexOf('PEDIDO 4121 p1') && txt.indexOf('PEDIDO 4121 p2') < txt.lastIndexOf('PEDIDO 4107 p1'), 'ordem dos pedidos');
+  assert.throws(() => mesclarPdfs([]), /Nenhum PDF/);
+});
+
+test('ID do lote: LOTE-AAAAMMDD-XXXX e a nota guarda o último e todos os lotes', () => {
+  const id = L.novoLoteId(new Date('2026-11-26T15:00:00Z'));
+  assert.match(id, /^LOTE-20261126-[0-9A-F]{4}$/);
+  const key = 'teste:lote:1';
+  L.begin(key, { tipo: 'pecas', numero: '1' });
+  L.marcarLote(key, 'LOTE-20261126-AAAA');
+  L.marcarLote(key, 'LOTE-20261126-BBBB');
+  L.marcarLote(key, 'LOTE-20261126-AAAA');
+  assert.equal(L.get(key).lote, 'LOTE-20261126-AAAA');
+  assert.deepEqual(L.get(key).lotes, ['LOTE-20261126-AAAA', 'LOTE-20261126-BBBB']);
+});

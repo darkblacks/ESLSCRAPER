@@ -85,7 +85,7 @@ export async function previewServico(s, file) {
  *   comentario
  * }
  */
-export async function lancarServico(s, payload, { commit }) {
+export async function lancarServico(s, payload, { commit, loteId = null }) {
   const { doc, fornecedor, os, servicos = [], comentario = '' } = payload;
   const faltas = [];
   if (!doc?.numero) faltas.push('número da nota');
@@ -122,6 +122,7 @@ export async function lancarServico(s, payload, { commit }) {
     tipo: 'servico', numero: doc.numero, serie: doc.serie, chave: doc.chave, fornecedor: fornecedor.nome, cnpj: onlyDigits(doc.prestador.cnpj),
     valor: doc.valorServicos, usuario: s.email,
   });
+  L.marcarLote(key, loteId);
   const mk = L.marker(key);
 
   try {

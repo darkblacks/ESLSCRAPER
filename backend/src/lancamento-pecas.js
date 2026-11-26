@@ -12,6 +12,7 @@ import {
 } from './lookups.js';
 import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
+import { registrarImpressao } from './impressao.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
@@ -239,7 +240,7 @@ export async function previewPecas(s, file) {
  *   comentarioOs, comentarioEntrada
  * }
  */
-export async function lancarPecas(s, payload, { commit }) {
+export async function lancarPecas(s, payload, { commit, loteId = null }) {
   const { nf, fornecedor, filial, almoxarifado, itens = [], os, baixa = {} } = payload;
   const faltas = [];
   if (!nf?.numero) faltas.push('número da NF');
@@ -298,6 +299,7 @@ export async function lancarPecas(s, payload, { commit }) {
   L.lock(key);
   try {
   L.begin(key, { tipo: 'pecas', numero: nf.numero, serie: nf.serie, chave: nf.chave, fornecedor: fornecedor.nome, cnpj: onlyDigits(nf.emitente.cnpj), valor: nf.valorNota, usuario: s.email });
+  L.marcarLote(key, loteId);
   if (dup.refazer) {
     L.arquivarEtapas(key, { invoiceId: dup.refazer.invoiceId, tipo: dup.refazer.tipo, motivo: 'refeita como Pedido', retirada: 'pendente' });
     p('Refazer como Pedido', true, `A NF avulsa id ${dup.refazer.invoiceId} fica intacta até a NF como Pedido estar conferida; depois os itens saem dela.`);
@@ -687,6 +689,10 @@ export async function lancarPecas(s, payload, { commit }) {
 
     // Só entrada no estoque (compra para estoque): termina aqui, sem OS e sem baixa.
     if (os.modo === 'nenhuma') {
+      // PDF do pedido de compra (Ações › Imprimir do ESL), capturado em aba própria — falha vira aviso, não erro
+      ctx(s.page, `NF ${nf.numero} · PDF do pedido de compra`);
+      const imp = await registrarImpressao(s, key);
+      if (imp) p('Impressão do pedido', !!imp.ok, imp.ok ? `PDF do pedido ${imp.pedidoNumero || imp.pedidoId} salvo para impressão.` : `PDF do pedido não capturado: ${imp.erro}. Dá para gerar depois pelo Histórico.`);
       const reg = L.finish(key, 'concluido', { resultado: { invoiceId, somenteEntrada: true, valor: vEsp } });
       return {
         ok: true, somenteEntrada: true, passos, itens: itensResumo(), registro: reg, invoiceId, tipoEntrada: await tipoEntrada(s, invoiceId),
@@ -799,6 +805,9 @@ export async function lancarPecas(s, payload, { commit }) {
     L.step(key, 'baixa', { ok: true });
     p('Baixa no estoque', true, `Saída de peças id ${wId}: ${wm.length} item(ns), ${qBaixa} un.`);
 
+    ctx(s.page, `NF ${nf.numero} · PDF do pedido de compra`);
+    const imp = await registrarImpressao(s, key);
+    if (imp) p('Impressão do pedido', !!imp.ok, imp.ok ? `PDF do pedido ${imp.pedidoNumero || imp.pedidoId} salvo para impressão.` : `PDF do pedido não capturado: ${imp.erro}. Dá para gerar depois pelo Histórico.`);
     const reg = L.finish(key, 'concluido', { resultado: { invoiceId, osId, osNumero: osInfo.numero, withdrawalId: wId, valor: vEsp } });
     return {
       ok: true, passos, itens: itensResumo(), registro: reg, osId, osNumero: osInfo.numero, invoiceId, withdrawalId: wId, tipoEntrada: await tipoEntrada(s, invoiceId),
