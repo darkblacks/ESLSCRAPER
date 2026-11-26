@@ -25,8 +25,8 @@ Automação do ESL Cloud da Transmassa (`https://transmassa.eslcloud.com.br`) vi
 
 | Arquivo | Papel |
 |---|---|
-| `src/server.js` | rotas Express, auth `X-API-Key`, sessão `X-Session-Id`, `/admin`, rate limit, limites |
-| `src/config.js` | config em runtime (`.env` + `data/config.json` do /admin), CORS, senha admin |
+| `src/server.js` | rotas Express, auth `X-API-Key`, sessão `X-Session-Id`, `/admin` (login do ESL, sem senha própria), rate limit, limites |
+| `src/config.js` | config em runtime (`.env` + `data/config.json` do /admin), CORS |
 | `src/esl.js` | sessões Playwright (1 contexto/página por usuário), login + código 2FA, keep-alive, `shutdown()` |
 | `src/lancamento-servicos.js` | aba XML de Serviços (OS + serviço; **não movimenta estoque**) |
 | `src/lancamento-pecas.js` | aba XML de Peças (cadastro de peça, entrada no estoque, OS, baixa) |
@@ -50,7 +50,7 @@ Automação do ESL Cloud da Transmassa (`https://transmassa.eslcloud.com.br`) vi
    automática) → comentário da baixa → conferência → histórico. Cada nota = uma execução; lote = sequência.
 4. Duplicidade e retomada dependem do `ledger` (checkpoint por etapa) + marca `[XML <12 últimos>]` gravada
    nos comentários do ESL. Não mude o formato de `docKey`/`marker` sem migração.
-5. Nunca logar corpo de requisição, senhas, cookies, `X-API-Key`, `X-Admin-Password`, `X-Session-Id`.
+5. Nunca logar corpo de requisição, senhas, cookies, `X-API-Key`, `X-Session-Id`.
    O Caddy remove cabeçalhos do log de acesso — mantenha.
 6. Nunca commitar `.env`, `backend-data/`, XML real, cookies/storageState, tokens, `node_modules`.
 7. Sem `git push --force`. Commits com a identidade já configurada no repo (e-mail noreply do GitHub).

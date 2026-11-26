@@ -60,15 +60,15 @@ async function call(method, path, body) {
 
 const q = (o) => '?' + new URLSearchParams(Object.entries(o).filter(([, v]) => v)).toString();
 
-/** Chamadas do painel de administração do servidor (senha de admin, não usa a chave da API). */
-export async function adminCall(method, senha, body, url = conexaoCfg.value.url) {
+/** Chamadas do painel de administração do servidor: usa a sessão do ESL já logada (X-Session-Id), sem senha extra. */
+export async function adminCall(method, body, url = conexaoCfg.value.url) {
   const res = await fetch(url + '/api/admin/config', {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-Admin-Password': senha },
+    headers: { 'Content-Type': 'application/json', ...(sessionId.value ? { 'X-Session-Id': sessionId.value } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { code: data.code, status: res.status });
   return data;
 }
 

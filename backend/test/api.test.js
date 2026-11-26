@@ -17,7 +17,7 @@ before(async () => {
   const cwd = tmpCwd();
   proc = spawn(process.execPath, [SERVER], {
     cwd,
-    env: { PATH: process.env.PATH, PORT: String(PORT), API_KEY: KEY, CORS_ORIGINS: ORIGEM, ADMIN_PASSWORD: 'senha-admin-teste', ALLOW_COMMIT: 'false', RATE_LIMIT_LOGIN_15MIN: '3', BODY_LIMIT: '1mb', ESL_BASE: 'http://127.0.0.1:9' },
+    env: { PATH: process.env.PATH, PORT: String(PORT), API_KEY: KEY, CORS_ORIGINS: ORIGEM, ALLOW_COMMIT: 'false', RATE_LIMIT_LOGIN_15MIN: '3', BODY_LIMIT: '1mb', ESL_BASE: 'http://127.0.0.1:9' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -83,12 +83,29 @@ test('upload acima do limite → 413 JSON; JSON inválido → 400', async () => 
   assert.equal(bad.status, 400);
 });
 
-test('/admin: senha errada recusada e não vaza a chave da API', async () => {
-  assert.equal((await get('/api/admin/config', { 'X-Admin-Password': 'errada!!' })).status, 401);
-  const r = await get('/api/admin/config', { 'X-Admin-Password': 'senha-admin-teste' });
+test('/admin: exige sessão ESL logada (sem senha de administrador)', async () => {
+  const r = await get('/api/admin/config');
+  assert.equal(r.status, 401);
+  assert.equal((await r.json()).code, 'sem_sessao');
+  // a antiga senha de administrador não dá mais acesso
+  assert.equal((await get('/api/admin/config', { 'X-Admin-Password': 'qualquer-coisa' })).status, 401);
+  assert.equal((await get('/api/admin/config', { 'X-Session-Id': 'inventada', 'X-API-Key': KEY })).status, 401);
+  const put = await fetch(BASE + '/api/admin/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Session-Id': 'inventada' }, body: JSON.stringify({ allowCommit: true }) });
+  assert.equal(put.status, 401);
+  assert.equal((await (await get('/api/health')).json()).commitEnabled, false, 'gravação continua desligada');
+});
+
+test('/admin: página do servidor usa o login do ESL', async () => {
+  const html = await (await get('/admin')).text();
+  assert.match(html, /login do ESL/);
+  assert.ok(!/ADMIN_PASSWORD|X-Admin-Password/.test(html));
+});
+
+test('/internal/lotes: só de dentro do container', async () => {
+  const r = await get('/internal/lotes');
   assert.equal(r.status, 200);
-  const txt = await r.text();
-  assert.ok(!txt.includes(KEY), 'chave completa não pode aparecer');
+  assert.deepEqual(await r.json(), { lotes: 0 });
+  assert.equal((await get('/internal/lotes', { 'X-Forwarded-For': '203.0.113.9' })).status, 404);
 });
 
 test('login: limite de tentativas por IP (429)', async () => {
@@ -97,4 +114,6 @@ test('login: limite de tentativas por IP (429)', async () => {
   const r = await post('/api/auth/login', {}, h);
   assert.equal(r.status, 429);
   assert.equal((await r.json()).code, 'rate_limit');
+  // o login do /admin (sem chave da API) divide o mesmo limite
+  assert.equal((await post('/api/admin/login', {})).status, 429);
 });

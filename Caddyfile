@@ -25,7 +25,7 @@
 		max_size {$MAX_UPLOAD:30MB}
 	}
 
-	# log de acesso SEM cabeçalhos: X-API-Key, X-Admin-Password e X-Session-Id nunca vão para o log
+	# log de acesso SEM cabeçalhos: X-API-Key e X-Session-Id nunca vão para o log
 	log {
 		output stdout
 		format filter {

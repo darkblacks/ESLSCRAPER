@@ -27,11 +27,10 @@ const BODY_LIMIT = process.env.BODY_LIMIT || '25mb';
 if (!C.get().apiKey || C.get().apiKey === 'troque-esta-chave') {
   console.warn('[aviso] Defina API_KEY no .env (ou pelo /admin) antes de expor este backend fora da sua máquina.');
 }
-if (!C.adminConfigurado()) console.warn('[aviso] ADMIN_PASSWORD não definida (mín. 8 caracteres) — o /admin fica desligado.');
 
 app.set('trust proxy', 1); // atrás do Caddy/nginx: IP real do cliente
 // CORS lido a cada requisição: origens alteradas no /admin valem na hora
-app.use(cors({ origin: (origin, cb) => cb(null, C.origemPermitida(origin)), allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Session-Id', 'X-Admin-Password'] }));
+app.use(cors({ origin: (origin, cb) => cb(null, C.origemPermitida(origin)), allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Session-Id'] }));
 app.use(express.json({ limit: BODY_LIMIT })); // lotes de XML (o Caddy também limita o tamanho do corpo)
 // corpo grande demais / JSON inválido: responde JSON (o frontend lê data.error)
 app.use((err, _req, res, next) => {
@@ -44,7 +43,7 @@ app.use((err, _req, res, next) => {
 // Geral: protege contra abuso; login/código: evita força bruta e abertura de muitos Chromium.
 const isHealth = (req) => req.path === '/api/health';
 app.use('/api', rateLimit({ janelaMs: 60_000, max: Number(process.env.RATE_LIMIT_PER_MIN || 600), pular: (req) => isHealth(req) }));
-app.use(['/api/auth/login', '/api/auth/code', '/api/auth/code/resend'], rateLimit({ janelaMs: 15 * 60_000, max: Number(process.env.RATE_LIMIT_LOGIN_15MIN || 20), msg: 'Muitas tentativas de login. Aguarde alguns minutos.' }));
+app.use(['/api/auth/login', '/api/auth/code', '/api/auth/code/resend', '/api/admin/login', '/api/admin/code', '/api/admin/code/resend'], rateLimit({ janelaMs: 15 * 60_000, max: Number(process.env.RATE_LIMIT_LOGIN_15MIN || 20), msg: 'Muitas tentativas de login. Aguarde alguns minutos.' }));
 
 // Nunca logar corpo de requisição (tem senha no /login).
 app.use((req, _res, next) => {
@@ -54,7 +53,7 @@ app.use((req, _res, next) => {
 
 // Auth da API: X-API-Key
 app.use('/api', (req, res, next) => {
-  if (req.path === '/health' || req.path.startsWith('/admin/')) return next(); // /admin usa a senha de administrador
+  if (req.path === '/health' || req.path.startsWith('/admin/')) return next(); // /admin usa o login do ESL (abaixo)
   const key = C.get().apiKey;
   if (key && req.get('x-api-key') !== key) return res.status(401).json({ error: 'API key inválida', code: 'api_key' });
   next();
@@ -63,17 +62,29 @@ app.use('/api', (req, res, next) => {
 /* ---------------------------- /admin ---------------------------- */
 // Página própria do backend (mesmo domínio — funciona mesmo se o CORS estiver errado): https://SEU-BACKEND/admin
 app.get('/admin', (_req, res) => res.type('html').send(adminPage()));
+// Acesso ao /admin = sessão do ESL logada (X-Session-Id), sem senha extra.
+// Não exige a chave da API: o /admin do próprio servidor é o caminho de socorro quando o CORS ou a chave estão errados.
+// A sessão criada por aqui só dá acesso às rotas /api/admin/*; as operacionais continuam exigindo X-API-Key.
 function requireAdmin(req, res, next) {
-  if (!C.adminConfigurado()) return res.status(503).json({ error: 'Defina ADMIN_PASSWORD (mín. 8 caracteres) no .env do servidor para usar o /admin.' });
-  const r = C.checarAdmin(req.ip, req.get('x-admin-password'));
-  if (r.bloqueado) return res.status(429).json({ error: `Muitas tentativas. Tente de novo em ${r.bloqueado}s.` });
-  if (!r.ok) return res.status(401).json({ error: 'Senha de administrador incorreta.' });
+  const s = getSession(req.get('x-session-id'));
+  if (!s) return res.status(401).json({ error: 'Entre com o seu login do ESL para administrar o servidor.', code: 'sem_sessao' });
+  if (s.status !== 'ok') return res.status(401).json({ error: 'O login no ESL caiu. Entre de novo.', code: 'reauth' });
+  req.esl = s;
   next();
 }
 const configPublica = () => {
   const c = C.get();
   return { ...c, apiKey: undefined, apiKeyDefinida: !!c.apiKey, apiKeyFinal: c.apiKey ? '…' + c.apiKey.slice(-4) : '' };
 };
+// Login do ESL para o /admin (mesmo fluxo do site: e-mail + senha → código 2FA). Rate limit de login acima.
+app.post('/api/admin/login', (req, res, next) => loginHandler(req, res, next));
+app.post('/api/admin/code', (req, res, next) => codeHandler(req, res, next));
+app.post('/api/admin/code/resend', (req, res, next) => resendHandler(req, res, next));
+app.post('/api/admin/logout', async (req, res) => {
+  const s = getSession(req.get('x-session-id'));
+  if (s && !s.emLote) await closeSession(s.id).catch(() => {}); // nunca derruba uma sessão com lote rodando
+  res.json({ ok: true });
+});
 app.get('/api/admin/config', requireAdmin, (_req, res) => res.json({ config: configPublica(), status: statusServidor() }));
 app.put('/api/admin/config', requireAdmin, (req, res) => {
   try {
@@ -84,7 +95,7 @@ app.put('/api/admin/config', requireAdmin, (req, res) => {
   if (b.gerarApiKey) patch.apiKey = chaveNova = C.novaChave();
   else if (b.apiKey) patch.apiKey = chaveNova = b.apiKey;
   C.update(patch);
-  console.log(new Date().toISOString(), '[admin] configuração alterada:', Object.keys(patch).join(', '));
+  console.log(new Date().toISOString(), '[admin] configuração alterada por', req.esl.email || '?', ':', Object.keys(patch).join(', '));
   // a chave nova só aparece UMA vez, nesta resposta
   res.json({ config: configPublica(), status: statusServidor(), apiKeyNova: chaveNova });
   } catch (e) {
@@ -129,28 +140,36 @@ const wrap = (fn) => (req, res) =>
 
 /* --------------------------- endpoints --------------------------- */
 
+// Só de dentro do container (ops/deploy.sh): quantos lotes estão rodando. Pelo Caddy chega com X-Forwarded-For → 404.
+app.get('/internal/lotes', (req, res) => {
+  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.get('x-forwarded-for');
+  if (!local) return res.status(404).end();
+  res.json({ lotes: listSessions().filter((x) => x.emLote).length });
+});
+
 app.get('/api/health', (_req, res) => res.json({ ok: true, commitEnabled: commitOn(), versao: VERSAO, uptimeS: Math.round((Date.now() - INICIO) / 1000) }));
 
-app.post('/api/auth/login', wrap(async (req, res) => {
+const loginHandler = wrap(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email e password são obrigatórios' });
   const reuse = req.body?.sessionId ? getSession(req.body.sessionId) : null;
   const r = await startLogin(email, password, reuse);
   res.status(r.status === 'error' ? 401 : 200).json(r);
-}));
-
-app.post('/api/auth/code', wrap(async (req, res) => {
+});
+const codeHandler = wrap(async (req, res) => {
   const s = getSession(req.get('x-session-id') || req.body?.sessionId);
   if (!s) return res.status(401).json({ error: 'Sessão não encontrada. Refaça o login.' });
   const r = await submitCode(s, req.body?.code);
   res.status(r.status === 'error' ? 401 : 200).json({ sessionId: s.id, ...r });
-}));
-
-app.post('/api/auth/code/resend', wrap(async (req, res) => {
+});
+const resendHandler = wrap(async (req, res) => {
   const s = getSession(req.get('x-session-id') || req.body?.sessionId);
   if (!s) return res.status(401).json({ error: 'Sessão não encontrada. Refaça o login.' });
   res.json(await resendCode(s));
-}));
+});
+app.post('/api/auth/login', loginHandler);
+app.post('/api/auth/code', codeHandler);
+app.post('/api/auth/code/resend', resendHandler);
 
 app.get('/api/auth/status', (req, res) => {
   const s = getSession(req.get('x-session-id'));

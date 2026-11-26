@@ -58,22 +58,3 @@ export function origemPermitida(origin) {
     return re.test(o);
   });
 }
-
-/* ---------------- senha do /admin ---------------- */
-const ADMIN = process.env.ADMIN_PASSWORD || '';
-const tentativas = new Map(); // ip -> { n, ate }
-export const adminConfigurado = () => ADMIN.length >= 8;
-export function checarAdmin(ip, senha) {
-  const t = tentativas.get(ip) || { n: 0, ate: 0 };
-  if (t.ate > Date.now()) return { ok: false, bloqueado: Math.ceil((t.ate - Date.now()) / 1000) };
-  const a = Buffer.from(String(senha || ''));
-  const b = Buffer.from(ADMIN);
-  const ok = adminConfigurado() && a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (ok) tentativas.delete(ip);
-  else {
-    t.n++;
-    if (t.n >= 5) Object.assign(t, { n: 0, ate: Date.now() + 5 * 60_000 }); // 5 erros → 5 min bloqueado
-    tentativas.set(ip, t);
-  }
-  return { ok };
-}

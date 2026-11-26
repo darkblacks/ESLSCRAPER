@@ -23,8 +23,16 @@ small{color:var(--muted)}.sw{display:flex;gap:8px;align-items:center;color:var(-
   <h1><b>ESL</b> Scraper · Admin do servidor</h1>
   <p class="m">Altera a configuração sem reiniciar. Salvo em <code>data/config.json</code>.</p>
   <div id="login">
-    <label>Senha de administrador (ADMIN_PASSWORD)<input id="pw" type="password" autocomplete="current-password"></label>
-    <button onclick="entrar()">Entrar</button>
+    <p class="m">Entre com o seu login do ESL (o mesmo do site). Não há senha extra.</p>
+    <form id="fcred" onsubmit="event.preventDefault();entrar()">
+      <label>E-mail do ESL<input id="em" type="email" autocomplete="username" required></label>
+      <label>Senha do ESL<input id="pw" type="password" autocomplete="current-password" required></label>
+      <button id="bcred">Entrar</button>
+    </form>
+    <form id="fcode" hidden onsubmit="event.preventDefault();codigo()">
+      <label><span id="hint">Código de 6 dígitos enviado por e-mail</span><input id="cd" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required></label>
+      <div class="row"><button id="bcode">Confirmar</button><button type="button" class="g" onclick="reenviar()">Reenviar código</button><button type="button" class="g" onclick="voltar()">Voltar</button></div>
+    </form>
   </div>
   <div id="cfg" hidden>
     <label>Origens liberadas no CORS — uma por linha (endereço do site no Netlify, ex.: https://esl-scraper.netlify.app · aceita https://*.netlify.app)
@@ -35,20 +43,34 @@ small{color:var(--muted)}.sw{display:flex;gap:8px;align-items:center;color:var(-
     <p><small id="chave"></small></p>
     <div id="nova"></div>
     <p><small id="st"></small></p>
+    <p><small id="quem"></small> <button class="g" onclick="sair()">Sair</button></p>
   </div>
   <div id="m"></div>
   <div class="foot">ESL Scraper · criado por <b>Victor Ferreira</b></div>
 </div>
 <script>
-let pw='';const $=(i)=>document.getElementById(i);
-const msg=(t,ok)=>{$('m').innerHTML=t?'<div class="msg '+(ok?'ok':'er')+'">'+t+'</div>':''};
-async function call(method,body){const r=await fetch('/api/admin/config',{method,headers:{'Content-Type':'application/json','X-Admin-Password':pw},body:body?JSON.stringify(body):undefined});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
+const $=(i)=>document.getElementById(i);
+const ss={get:()=>{try{return sessionStorage.getItem('esl_admin_session')||''}catch{return''}},set:(v)=>{try{v?sessionStorage.setItem('esl_admin_session',v):sessionStorage.removeItem('esl_admin_session')}catch{}}};
+let sid=ss.get(),pend='';
+const msg=(t,ok)=>{$('m').innerHTML='';if(!t)return;const d=document.createElement('div');d.className='msg '+(ok?'ok':'er');d.textContent=t;$('m').appendChild(d)};
+async function req(method,path,body,h){const r=await fetch(path,{method,headers:{'Content-Type':'application/json',...(h||{})},body:body?JSON.stringify(body):undefined});const d=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(d.error||d.message||('HTTP '+r.status)),{code:d.code,status:r.status});return d}
+const call=(method,body)=>req(method,'/api/admin/config',body,{'X-Session-Id':sid});
+function telaLogin(t){$('login').hidden=false;$('cfg').hidden=true;$('fcred').hidden=false;$('fcode').hidden=true;msg(t||'')}
 function mostrar(d){$('login').hidden=true;$('cfg').hidden=false;const c=d.config;$('cors').value=(c.corsOrigins||[]).join('\\n');$('commit').checked=!!c.allowCommit;$('ttl').value=c.sessionTtlMin;
 $('chave').textContent=c.apiKeyDefinida?'Chave da API atual termina em '+c.apiKeyFinal:'Sem chave da API definida (qualquer um com o endereço usa a API).';
 $('st').textContent='Online desde '+new Date(d.status.desde).toLocaleString('pt-BR')+' · '+d.status.sessoes.length+' sessão(ões) do ESL abertas';
-$('nova').innerHTML=d.apiKeyNova?'<p class="msg ok">Chave nova — copie agora, ela não aparece de novo. Cole em <b>Configurações</b> no site (ou no VITE_API_KEY do Netlify):</p><div class="key">'+d.apiKeyNova+'</div>':''}
-async function entrar(){pw=$('pw').value;try{mostrar(await call('GET'));msg('')}catch(e){msg(e.message)}}
-async function salvar(){try{mostrar(await call('PUT',{corsOrigins:$('cors').value.split(/\\n+/).map(s=>s.trim()).filter(Boolean),allowCommit:$('commit').checked,sessionTtlMin:+$('ttl').value}));msg('Salvo. Já está valendo.',1)}catch(e){msg(e.message)}}
-async function gerar(){if(!confirm('Gerar uma chave nova? A atual para de funcionar na hora e o site precisa receber a nova.'))return;try{mostrar(await call('PUT',{gerarApiKey:true}));msg('Chave trocada.',1)}catch(e){msg(e.message)}}
-$('pw').addEventListener('keydown',e=>{if(e.key==='Enter')entrar()});
+$('nova').innerHTML='';if(d.apiKeyNova){const p=document.createElement('p');p.className='msg ok';p.textContent='Chave nova — copie agora, ela não aparece de novo. Cole em Configurações no site (ou no VITE_API_KEY do Netlify):';const k=document.createElement('div');k.className='key';k.textContent=d.apiKeyNova;$('nova').append(p,k)}}
+function erroSessao(e){if(e.status===401&&(e.code==='sem_sessao'||e.code==='reauth')){sid='';ss.set('');telaLogin(e.message);return true}return false}
+async function carregar(){try{mostrar(await call('GET'));msg('')}catch(e){if(!erroSessao(e))msg(e.message)}}
+async function logado(id){sid=id;ss.set(id);$('pw').value='';$('cd').value='';$('quem').textContent='Logado no ESL como '+$('em').value+'.';await carregar()}
+async function entrar(){$('bcred').disabled=true;msg('Entrando no ESL…',1);try{const r=await req('POST','/api/admin/login',{email:$('em').value,password:$('pw').value});
+if(r.status==='ok')return logado(r.sessionId);if(r.status==='code_required'){pend=r.sessionId;$('fcred').hidden=true;$('fcode').hidden=false;$('hint').textContent=r.message||'Código de 6 dígitos enviado por e-mail';msg('');$('cd').focus();return}
+msg(r.message||'Falha no login')}catch(e){msg(e.message)}finally{$('bcred').disabled=false;$('pw').value=''}}
+async function codigo(){$('bcode').disabled=true;try{const r=await req('POST','/api/admin/code',{sessionId:pend,code:$('cd').value});if(r.status==='ok')return logado(r.sessionId);msg(r.message||'Código inválido')}catch(e){msg(e.message);if(e.status===401&&/Sessão/.test(e.message))voltar()}finally{$('bcode').disabled=false}}
+async function reenviar(){try{const r=await req('POST','/api/admin/code/resend',{sessionId:pend});msg(r.message,r.ok)}catch(e){msg(e.message)}}
+function voltar(){pend='';$('cd').value='';telaLogin('')}
+async function sair(){try{await req('POST','/api/admin/logout',null,{'X-Session-Id':sid})}catch{}sid='';ss.set('');telaLogin('Você saiu.')}
+async function salvar(){try{mostrar(await call('PUT',{corsOrigins:$('cors').value.split(/\\n+/).map(s=>s.trim()).filter(Boolean),allowCommit:$('commit').checked,sessionTtlMin:+$('ttl').value}));msg('Salvo. Já está valendo.',1)}catch(e){if(!erroSessao(e))msg(e.message)}}
+async function gerar(){if(!confirm('Gerar uma chave nova? A atual para de funcionar na hora e o site precisa receber a nova.'))return;try{mostrar(await call('PUT',{gerarApiKey:true}));msg('Chave trocada.',1)}catch(e){if(!erroSessao(e))msg(e.message)}}
+if(sid)carregar();
 </script></body></html>`;

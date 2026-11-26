@@ -3,8 +3,8 @@ import { ref } from 'vue';
 import { api, setSession } from '../api.js';
 
 // modal = login por cima da tela (sessão caiu); reuse = id da sessão a reaproveitar (lote pausado continua nela)
-const props = defineProps({ modal: Boolean, reuse: String, motivo: String, emailInicial: String });
-const emit = defineEmits(['logged']);
+const props = defineProps({ modal: Boolean, reuse: String, motivo: String, emailInicial: String, titulo: String, fechavel: Boolean });
+const emit = defineEmits(['logged', 'fechar']);
 const step = ref('credentials'); // credentials | code
 const email = ref(props.emailInicial || '');
 const password = ref('');
@@ -79,7 +79,7 @@ async function submitCode() {
       <img v-if="!modal" src="/logo.png" alt="ESL Scraper" class="login-logo" />
       <img v-else src="/fox.png" alt="" class="login-fox" />
 
-      <h2>{{ modal ? 'Entre de novo no ESL' : 'Entrar no ESL Cloud' }}</h2>
+      <h2>{{ titulo || (modal ? 'Entre de novo no ESL' : 'Entrar no ESL Cloud') }}</h2>
       <p v-if="modal" class="alertbox">
         {{ motivo || 'O login no ESL caiu.' }}
         <b v-if="reuse">Nada foi perdido: se havia um lote rodando, ele está pausado e continua sozinho assim que você entrar.</b>
@@ -109,6 +109,7 @@ async function submitCode() {
       </Transition>
 
       <Transition name="fade"><p v-if="msg" class="msg">{{ msg }}</p></Transition>
+      <button v-if="fechavel" type="button" class="ghost" style="margin-top: 8px" @click="emit('fechar')">Cancelar</button>
       <p v-if="!modal" class="credit">criado por <b>Victor Ferreira</b></p>
     </section>
   </div>

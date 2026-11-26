@@ -1,8 +1,9 @@
 <script setup>
 // /admin — 1) conexão DESTE navegador com o backend (endereço + chave da API, sem precisar refazer o build)
-//          2) configuração do SERVIDOR (CORS, gravação, sessão, chave da API) com a senha de administrador.
-import { ref, reactive } from 'vue';
-import { conexaoCfg, salvarConexao, padraoConexao, adminCall, chaveInvalida } from '../api.js';
+//          2) configuração do SERVIDOR (CORS, gravação, sessão, chave da API) com o login do ESL já feito no site.
+import { ref, reactive, onMounted } from 'vue';
+import { conexaoCfg, salvarConexao, padraoConexao, adminCall, chaveInvalida, sessionId } from '../api.js';
+import Login from './Login.vue';
 
 const con = reactive({ url: conexaoCfg.value.url, key: conexaoCfg.value.key });
 const teste = ref(null); // { ok, msg }
@@ -36,8 +37,9 @@ function restaurar() {
 }
 
 /* --------- servidor --------- */
-const senha = ref('');
 const srv = ref(null);
+const pedirLoginEsl = ref(false); // mostra o login do ESL por cima (sem sessão, ou sessão caiu)
+const emailLogado = ref('');
 const form = reactive({ cors: '', allowCommit: false, sessionTtlMin: 60 });
 const chaveNova = ref('');
 const erro = ref('');
@@ -51,28 +53,43 @@ function aplicar(d) {
   form.sessionTtlMin = d.config.sessionTtlMin;
   if (d.apiKeyNova) chaveNova.value = d.apiKeyNova;
 }
-async function entrar() {
+/** Sem sessão ou login caído: limpa a tela do servidor e pede o login do ESL. */
+function semSessao(e) {
+  if (e.status === 401 && ['sem_sessao', 'reauth'].includes(e.code)) {
+    srv.value = null;
+    return true;
+  }
+  return false;
+}
+async function carregar() {
   erro.value = '';
+  if (!sessionId.value) return;
   carregando.value = true;
   try {
-    aplicar(await adminCall('GET', senha.value));
+    aplicar(await adminCall('GET'));
   } catch (e) {
-    erro.value = e.message === 'Failed to fetch' ? 'O servidor não respondeu a este site (provavelmente CORS). Use o admin do próprio servidor, no link abaixo.' : e.message;
+    if (!semSessao(e)) erro.value = e.message === 'Failed to fetch' ? 'O servidor não respondeu a este site (provavelmente CORS). Use o admin do próprio servidor, no link abaixo.' : e.message;
   } finally {
     carregando.value = false;
   }
 }
+function onLogged(email) {
+  emailLogado.value = email;
+  pedirLoginEsl.value = false;
+  carregar();
+}
+onMounted(carregar); // já logado no site (mesma aba): abre direto
 async function salvarSrv(extra = {}) {
   erro.value = '';
   salvo.value = '';
   try {
-    aplicar(await adminCall('PUT', senha.value, {
+    aplicar(await adminCall('PUT', {
       corsOrigins: form.cors.split(/\n+/).map((x) => x.trim()).filter(Boolean),
       allowCommit: form.allowCommit, sessionTtlMin: Number(form.sessionTtlMin), ...extra,
     }));
     salvo.value = 'Salvo — já está valendo no servidor.';
   } catch (e) {
-    erro.value = e.message;
+    if (!semSessao(e)) erro.value = e.message;
   }
 }
 async function gerarChave() {
@@ -119,11 +136,11 @@ const sair = () => (location.href = '/');
     <section class="card">
       <h3>Servidor</h3>
       <template v-if="!srv">
-        <p class="muted small">Precisa da senha de administrador (ADMIN_PASSWORD do .env do servidor).</p>
-        <form class="row" @submit.prevent="entrar">
-          <input v-model="senha" type="password" placeholder="senha de administrador" style="max-width: 320px" autocomplete="current-password" />
-          <button :disabled="carregando || !senha"><span v-if="carregando" class="spin" /> Entrar</button>
-        </form>
+        <p v-if="carregando" class="muted small"><span class="spin" /> Carregando a configuração do servidor…</p>
+        <template v-else>
+          <p class="muted small">Usa o seu login do ESL — o mesmo do site, sem senha extra. Se você já entrou no site nesta aba, a configuração abre sozinha.</p>
+          <button @click="pedirLoginEsl = true">Entrar com o login do ESL</button>
+        </template>
       </template>
       <template v-else>
         <div class="grid">
@@ -146,6 +163,7 @@ const sair = () => (location.href = '/');
           </div>
         </Transition>
         <p v-if="salvo" class="okc">{{ salvo }}</p>
+        <p v-if="emailLogado" class="muted small">Logado no ESL como {{ emailLogado }}.</p>
         <p class="muted small">
           Online desde {{ new Date(srv.status.desde).toLocaleString('pt-BR') }} · {{ srv.status.sessoes.length }} sessão(ões) do ESL abertas
           <span v-for="(x, i) in srv.status.sessoes" :key="i"> · {{ x.email }} ({{ x.status }}{{ x.emLote ? ', lote rodando' : '' }})</span>
@@ -155,5 +173,9 @@ const sair = () => (location.href = '/');
       <p class="muted small">Se este site não conseguir falar com o servidor (CORS errado), use o admin do próprio servidor:
         <a :href="con.url + '/admin'" target="_blank" rel="noopener">{{ con.url }}/admin</a></p>
     </section>
+
+    <Transition name="pop">
+      <Login v-if="pedirLoginEsl" modal titulo="Entrar no ESL" motivo="Entre com o seu login do ESL para administrar o servidor." fechavel @logged="onLogged" @fechar="pedirLoginEsl = false" />
+    </Transition>
   </div>
 </template>

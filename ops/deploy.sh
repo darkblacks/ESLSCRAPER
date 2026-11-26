@@ -31,7 +31,7 @@ git merge-base --is-ancestor "$ATUAL" "$NOVO" || falha "o GitHub não é continu
 if [ "$MODO" = "--check" ]; then echo "Atualização disponível: $(git rev-parse --short "$ATUAL") → $(git rev-parse --short "$NOVO")"; git log --oneline "$ATUAL..$NOVO"; exit 0; fi
 
 # reiniciar o backend encerra as sessões ESL e interrompe lotes em andamento
-LOTES=$(docker compose exec -T backend node -e "fetch('http://localhost:3333/api/admin/config',{headers:{'X-Admin-Password':process.env.ADMIN_PASSWORD||''}}).then(r=>r.json()).then(j=>console.log((j.status?.sessoes||[]).filter(s=>s.emLote).length)).catch(()=>console.log(0))" 2>/dev/null || echo 0)
+LOTES=$(docker compose exec -T backend node -e "fetch('http://127.0.0.1:3333/internal/lotes').then(r=>r.json()).then(j=>console.log(j.lotes||0)).catch(()=>console.log(0))" 2>/dev/null || echo 0)
 if [ "${LOTES:-0}" != "0" ] && [ "${FORCAR:-0}" != "1" ]; then
   falha "há $LOTES lote(s) em andamento — reiniciar agora interromperia o lote. Espere terminar ou use FORCAR=1."
 fi

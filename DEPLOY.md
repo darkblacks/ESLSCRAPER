@@ -18,7 +18,7 @@ Netlify (frontend Vue) ──HTTPS──▶ 194-61-238-7.sslip.io:443 (Caddy, Le
 | IP público | `194.61.238.7` |
 | API pública | `https://194-61-238-7.sslip.io` |
 | Health check | `https://194-61-238-7.sslip.io/api/health` |
-| Admin do servidor | `https://194-61-238-7.sslip.io/admin` (senha `ADMIN_PASSWORD` do `.env`) |
+| Admin do servidor | `https://194-61-238-7.sslip.io/admin` (login do ESL: e-mail + senha + código 2FA) |
 | Código (git) | `/opt/esl-scraper-git` → github.com/darkblacks/ESLSCRAPER (branch `main`) |
 | Configuração | `/opt/esl-scraper-git/.env` (chmod 600, **fora do git**) |
 | Dados persistentes | `/opt/esl-scraper-git/backend-data/` (dono uid 1001 = `pwuser` do container) |
@@ -55,7 +55,6 @@ Modelo: `deploy.env.example`. Nunca commitar o `.env`.
 | `DOMINIO` | host do certificado HTTPS (hoje `194-61-238-7.sslip.io`) |
 | `ESL_BASE` | `https://transmassa.eslcloud.com.br` |
 | `API_KEY` | chave exigida no header `X-API-Key` (≥16 chars). **Vai no frontend → não é segredo forte.** |
-| `ADMIN_PASSWORD` | senha do `/admin` (≥8 chars). Segredo de verdade. 5 erros → bloqueio de 5 min por IP. |
 | `CORS_ORIGINS` | URL(s) do site no Netlify, separadas por vírgula (aceita `https://*.netlify.app`) |
 | `ALLOW_COMMIT` | `false` = **modo simulação** (nada é gravado no ESL). Pode ser ligado pelo `/admin`. |
 | `SESSION_TTL_MIN` | minutos ociosos até fechar a sessão ESL (padrão 60) |
@@ -78,8 +77,9 @@ Depois: **Deploys › Trigger deploy** (variáveis `VITE_*` entram no build). E 
 (`CORS_ORIGINS` no `.env` + `docker compose up -d backend`, ou pelo `/admin`).
 
 > `VITE_API_KEY` fica visível no JavaScript do site. A proteção real das operações é o **login no ESL**
-> (toda rota operacional exige `X-Session-Id` de uma sessão logada) + `ADMIN_PASSWORD` + rate limit.
-> Nunca coloque senha do ESL ou `ADMIN_PASSWORD` em variáveis `VITE_*`.
+> (toda rota operacional exige `X-Session-Id` de uma sessão logada) + rate limit. O `/admin` (site e servidor)
+> também usa o login do ESL: **qualquer usuário que consiga entrar no ESL pode ligar/desligar a gravação**.
+> Nunca coloque senha do ESL em variáveis `VITE_*`. `ADMIN_PASSWORD` não é mais usada (pode sair do `.env`).
 
 ## 4. Operação do dia a dia
 
