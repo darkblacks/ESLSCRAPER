@@ -9,6 +9,7 @@ import {
 import { previewXmls, lancarOS, historico } from './manutencao.js';
 import * as LK from './lookups.js';
 import * as LEDGER from './ledger.js';
+import * as IMP from './impressao.js';
 import { previewServico, lancarServico } from './lancamento-servicos.js';
 import { previewPecas, lancarPecas } from './lancamento-pecas.js';
 import { startBatch, getBatch, cancelBatch, getTelas } from './lote.js';
@@ -31,7 +32,7 @@ if (!C.get().apiKey || C.get().apiKey === 'troque-esta-chave') {
 
 app.set('trust proxy', 1); // atrás do Caddy/nginx: IP real do cliente
 // CORS lido a cada requisição: origens alteradas no /admin valem na hora
-app.use(cors({ origin: (origin, cb) => cb(null, C.origemPermitida(origin)), allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Session-Id'] }));
+app.use(cors({ origin: (origin, cb) => cb(null, C.origemPermitida(origin)), allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Session-Id'], exposedHeaders: ['X-Pedidos-Incluidos', 'X-Pedidos-Faltaram'] }));
 app.use(express.json({ limit: BODY_LIMIT })); // lotes de XML (o Caddy também limita o tamanho do corpo)
 // corpo grande demais / JSON inválido: responde JSON (o frontend lê data.error)
 app.use((err, _req, res, next) => {
@@ -259,7 +260,7 @@ app.post('/api/xml/servicos/preview', requireSession, wrap(async (req, res) => {
 }));
 
 app.post('/api/xml/servicos/lancar', requireSession, wrap(async (req, res) => {
-  res.json(await lancarServico(req.esl, req.body || {}, { commit: commitOn() }));
+  res.json(await lancarServico(req.esl, req.body || {}, { commit: commitOn(), loteId: LEDGER.novoLoteId() }));
 }));
 
 // Só leitura: abre a tela de nova NF de entrada (sem salvar) e devolve as opções do tipo (Avulsa / Pedido).
@@ -277,7 +278,7 @@ app.post('/api/xml/pecas/preview', requireSession, wrap(async (req, res) => {
 }));
 
 app.post('/api/xml/pecas/lancar', requireSession, wrap(async (req, res) => {
-  res.json(await lancarPecas(req.esl, req.body || {}, { commit: commitOn() }));
+  res.json(await lancarPecas(req.esl, req.body || {}, { commit: commitOn(), loteId: LEDGER.novoLoteId() }));
 }));
 
 // Lote: { tipo: 'servicos'|'pecas', notas: [ { ref, payload } ] } → { id } ; progresso em GET /api/xml/lote/:id
@@ -294,10 +295,34 @@ app.get('/api/xml/lote/:id', requireKnownSession, (req, res) => {
 app.get('/api/xml/lote/:id/telas/:ref', requireKnownSession, (req, res) => res.json(getTelas(req.params.id, req.params.ref)));
 app.post('/api/xml/lote/:id/cancelar', requireKnownSession, (req, res) => res.json(cancelBatch(req.params.id) || {}));
 
-app.get('/api/xml/historico', requireSession, (req, res) => {
-  const tipo = req.query.tipo;
-  res.json(LEDGER.all().filter((r) => !tipo || r.tipo === tipo));
+// Histórico com filtros: ?tipo=pecas|servico&lote=LOTE-...&status=concluido|erro|em_andamento&nf=123&de=AAAA-MM-DD&ate=AAAA-MM-DD
+const filtrosHist = (q) => ({ tipo: q.tipo, lote: q.lote, status: q.status, nf: q.nf, de: q.de, ate: q.ate });
+app.get('/api/xml/historico', requireKnownSession, (req, res) => {
+  res.json(IMP.filtrarHistorico(LEDGER.all(), filtrosHist(req.query)).map(IMP.resumoHistorico));
 });
+const enviarPdf = (res, pdf, nome) => {
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${nome}"`, 'Cache-Control': 'no-store' });
+  res.send(pdf);
+};
+// PDF único de vários pedidos ("Imprimir Tudo"): mesmos filtros do histórico, SEMPRE só notas concluídas.
+app.get('/api/xml/historico/pedidos.pdf', requireKnownSession, wrap(async (req, res) => {
+  const regs = IMP.filtrarHistorico(LEDGER.all(), { ...filtrosHist(req.query), tipo: 'pecas', status: 'concluido' })
+    .map(IMP.resumoHistorico).filter((r) => r.pedidoId)
+    .sort((a, b) => String(a.inicio).localeCompare(String(b.inicio))); // ordem em que foram lançadas
+  const r = await IMP.pdfMesclado(req.esl, regs);
+  res.set({ 'X-Pedidos-Incluidos': String(r.incluidas.length), 'X-Pedidos-Faltaram': encodeURIComponent(r.faltaram.map((f) => `NF ${f.numero}: ${f.motivo}`).join(' | ').slice(0, 1500)) });
+  enviarPdf(res, r.pdf, `pedidos-${String(req.query.lote || 'historico').replace(/[^\w-]/g, '')}.pdf`);
+}));
+// "Completar histórico": lote para notas antigas + PDF dos pedidos já lançados que ainda não têm (em blocos)
+app.post('/api/xml/historico/completar', requireSession, wrap(async (req, res) => {
+  res.json(await IMP.completarHistorico(req.esl, { max: Math.min(30, Number(req.query.max) || 15) }));
+}));
+// PDF do pedido de compra de UMA nota (salvo; se ainda não houver, captura agora com a sessão do ESL)
+app.get('/api/xml/historico/:docKey/pedido.pdf', requireKnownSession, wrap(async (req, res) => {
+  const pdf = await IMP.pdfDaNota(req.esl, req.params.docKey);
+  const reg = LEDGER.get(req.params.docKey);
+  enviarPdf(res, pdf, `pedido-NF${String(reg?.numero || '').replace(/\D/g, '')}.pdf`);
+}));
 
 // Inserção em lote: { route, newHref, rows: [ {...}, {...} ], commit }
 app.post('/api/insert/batch', requireSession, wrap(async (req, res) => {

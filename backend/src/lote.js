@@ -4,6 +4,7 @@
 import crypto from 'node:crypto';
 import { lancarServico } from './lancamento-servicos.js';
 import { lancarPecas } from './lancamento-pecas.js';
+import * as L from './ledger.js';
 import { searchServiceOrders, searchVehicles } from './lookups.js';
 
 const jobs = new Map(); // id -> job
@@ -34,8 +35,9 @@ async function resolveOs(s, os) {
 /** tipo: 'servicos' | 'pecas'; notas: [{ ref, payload }] */
 export function startBatch(s, tipo, notas, { commit }) {
   const id = crypto.randomUUID();
+  const loteId = L.novoLoteId(); // ID legível do envio (LOTE-AAAAMMDD-XXXX), gravado em cada nota do histórico
   const job = {
-    id, tipo, total: notas.length, feitos: 0, atual: null, inicio: new Date().toISOString(), fim: null, cancelado: false,
+    id, loteId, tipo, total: notas.length, feitos: 0, atual: null, inicio: new Date().toISOString(), fim: null, cancelado: false,
     resultados: notas.map((n) => ({ ref: n.ref, status: 'na fila' })),
   };
   jobs.set(id, job);
@@ -70,7 +72,7 @@ export function startBatch(s, tipo, notas, { commit }) {
           s.page._trail = trilha;
           s.page._onShot = (t) => (job.ultimaTela = { ref: n.ref, legenda: t.legenda, em: t.em, img: t.img });
           telas.set(`${id}|${n.ref}`, trilha);
-          const r = tipo === 'pecas' ? await lancarPecas(s, payload, { commit }) : await lancarServico(s, payload, { commit });
+          const r = tipo === 'pecas' ? await lancarPecas(s, payload, { commit, loteId }) : await lancarServico(s, payload, { commit, loteId });
           delete r.servicosOs;
           if (r.screenshot) telas.get(`${id}|${n.ref}`)?.push({ em: new Date().toISOString(), legenda: r.ok ? 'tela final' : 'tela no momento do erro', img: r.screenshot });
           delete r.screenshot;

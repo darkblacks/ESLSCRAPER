@@ -372,6 +372,7 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
     <div v-if="linhas.length" class="actionbar">
       <span class="muted small">{{ linhas.length }} NF(s) · {{ prontas.length }} pronta(s) · {{ linhas.filter((l) => l.estado === 'lançada').length }} lançada(s)</span>
       <span v-if="job && !job.fim" class="small">Lançando {{ job.feitos + 1 }}/{{ job.total }}… <a class="link" @click="cancelar">parar após a atual</a></span>
+      <span v-if="job?.loteId" class="small muted" title="Use este ID no Histórico para filtrar e imprimir os pedidos deste envio">{{ job.loteId }}</span>
       <span class="spacer" />
       <button class="ghost" @click="limpar">Limpar lista</button>
       <button class="big" :disabled="!prontas.length || (job && !job.fim) || !props.commitEnabled" @click="lancarTudo"

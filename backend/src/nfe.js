@@ -74,12 +74,32 @@ export function parseNfe(xml) {
     valorFrete: num(tot.vFrete),
     valorDesconto: num(tot.vDesc),
     vencimentos: (inf.cobr?.dup || []).map((d) => ({ numero: d.nDup, vencimento: d.dVenc, valor: num(d.vDup) })),
+    pagamentos: (inf.pag?.detPag || []).map((d) => ({ tipo: d.tPag != null ? String(d.tPag).padStart(2, '0') : null, indicador: d.indPag != null ? String(d.indPag) : null, valor: num(d.vPag) })),
     infoComplementar: infCpl,
     // Pistas que às vezes vêm no texto livre (pedido, placa)
     pedidoNoTexto: (infCpl.match(/PEDIDO:\s*([A-Z0-9\-]+)/i) || [])[1] || null,
     placaNoTexto: (infCpl.toUpperCase().match(/\b([A-Z]{3}-?\d[A-Z0-9]\d{2})\b/) || [])[1]?.replace('-', '') || null,
     items,
   };
+}
+
+/**
+ * Condição de pagamento padronizada para o pedido de compra no ESL — sempre um dos textos que já existem lá:
+ * "A PRAZO" | "CARTAO CREDITO" | "A VISTA". Nunca em branco: sem informação na NF → "A PRAZO" (padrão de fornecedor).
+ * Regras (NF-e 4.00): tPag 03 = cartão de crédito; parcela com vencimento depois da emissão, indPag 1, boleto (15)
+ * ou crédito loja (05) = a prazo; dinheiro (01), cheque (02), débito (04), PIX (17/20) e afins = à vista.
+ * Devolve { condicao, motivo }.
+ */
+export function condicaoPagamentoDe(nf) {
+  const pags = nf?.pagamentos || [];
+  const emissao = String(nf?.emissao || '').slice(0, 10);
+  const tipos = pags.map((p) => p.tipo).filter(Boolean);
+  if (tipos.includes('03')) return { condicao: 'CARTAO CREDITO', motivo: 'NF paga com cartão de crédito' };
+  const futuras = (nf?.vencimentos || []).filter((v) => v.vencimento && (!emissao || String(v.vencimento).slice(0, 10) > emissao));
+  if (futuras.length) return { condicao: 'A PRAZO', motivo: `${futuras.length} parcela(s) com vencimento` };
+  if (pags.some((p) => p.indicador === '1') || tipos.some((t) => ['05', '15'].includes(t))) return { condicao: 'A PRAZO', motivo: 'NF indica pagamento a prazo/boleto' };
+  if (tipos.some((t) => ['01', '02', '04', '16', '17', '18', '20'].includes(t)) || pags.some((p) => p.indicador === '0')) return { condicao: 'A VISTA', motivo: 'NF indica pagamento à vista' };
+  return { condicao: 'A PRAZO', motivo: 'NF sem forma de pagamento — padrão A PRAZO' };
 }
 
 /** "2026-11-09T15:01:00-02:00" → { date: "09/11/2026", time: "15:01" } (horário local da nota) */

@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as L from './ledger.js';
 import { apiGet } from './esl.js';
-import { parseNfe, splitEmissao } from './nfe.js';
+import { parseNfe, splitEmissao, condicaoPagamentoDe } from './nfe.js';
 import {
   findPersonByDocument, findPurchaseInvoice, findStorageInvoices, storageInvoiceMovements, withdrawalMovements,
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
 } from './lookups.js';
-import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
+import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
+import { registrarImpressao } from './impressao.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
@@ -239,7 +240,7 @@ export async function previewPecas(s, file) {
  *   comentarioOs, comentarioEntrada
  * }
  */
-export async function lancarPecas(s, payload, { commit }) {
+export async function lancarPecas(s, payload, { commit, loteId = null }) {
   const { nf, fornecedor, filial, almoxarifado, itens = [], os, baixa = {} } = payload;
   const faltas = [];
   if (!nf?.numero) faltas.push('número da NF');
@@ -298,6 +299,7 @@ export async function lancarPecas(s, payload, { commit }) {
   L.lock(key);
   try {
   L.begin(key, { tipo: 'pecas', numero: nf.numero, serie: nf.serie, chave: nf.chave, fornecedor: fornecedor.nome, cnpj: onlyDigits(nf.emitente.cnpj), valor: nf.valorNota, usuario: s.email });
+  L.marcarLote(key, loteId);
   if (dup.refazer) {
     L.arquivarEtapas(key, { invoiceId: dup.refazer.invoiceId, tipo: dup.refazer.tipo, motivo: 'refeita como Pedido', retirada: 'pendente' });
     p('Refazer como Pedido', true, `A NF avulsa id ${dup.refazer.invoiceId} fica intacta até a NF como Pedido estar conferida; depois os itens saem dela.`);
@@ -345,8 +347,15 @@ export async function lancarPecas(s, payload, { commit }) {
     //    Avulsa: tela /storage/invoice/products/new, como sempre.
     const codigoDe = (pr, it) => (it.acao === 'cadastrar' ? it.novo.code : String(pr.text || '').split(' - ')[0]).trim();
     // padrão (NF, chave, marca de controle) primeiro — nunca é cortado; depois o texto livre do usuário (até 500 caracteres)
-    const comentarioEntrada = [`NF ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
+    // comentário padrão (como lançam à mão: "PLACA NF: nº"): placa da NF, nº/série, chave e marca de controle — nunca cortado;
+    // depois o texto livre do usuário (até 500 caracteres)
+    const placaNf = String(os?.placa || nf.placaNoTexto || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
+    const comentarioEntrada = [`${placaNf ? `PLACA ${placaNf} ` : ''}NF: ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
       .filter(Boolean).join(' | ');
+    // condição de pagamento padronizada (A PRAZO | CARTAO CREDITO | A VISTA), nunca em branco
+    const pag = payload.condicaoPagamento && ['A PRAZO', 'CARTAO CREDITO', 'A VISTA'].includes(String(payload.condicaoPagamento).toUpperCase())
+      ? { condicao: String(payload.condicaoPagamento).toUpperCase(), motivo: 'escolhida na tela' }
+      : condicaoPagamentoDe(nf);
     let invoiceId = E().entrada?.invoiceId;
     if (!invoiceId && tipoNf === 'Avulsa') {
       ctx(s.page, `NF ${nf.numero} · entrada avulsa · cabeçalho`);
@@ -358,14 +367,40 @@ export async function lancarPecas(s, payload, { commit }) {
     } else if (!invoiceId) {
       // 3a) pedido de compra
       let pedidoId = E().entrada?.pedidoId;
+      const pedidoNovo = !pedidoId;
       if (!pedidoId) {
         ctx(s.page, `NF ${nf.numero} · pedido de compra · cabeçalho`);
         pedidoId = await createPurchaseOrder(s, {
-          filial, providerId: fornecedor.id, providerText: fornecedor.nome, date: payload.date, time: payload.time, comments: comentarioEntrada,
+          filial, providerId: fornecedor.id, providerText: fornecedor.nome, date: payload.date, time: payload.time,
+          paymentCondition: pag.condicao, comments: comentarioEntrada,
         });
         L.step(key, 'entrada', { pedidoId });
-        p('Pedido de compra', true, `Pedido de compra criado (id ${pedidoId}).`);
-      } else p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
+        p('Pedido de compra', true, `Pedido de compra criado (id ${pedidoId}), condição ${pag.condicao} (${pag.motivo}).`);
+      }
+      {
+        // condição de pagamento é OBRIGATÓRIA: confere no ESL o que gravou (pedido novo ou retomado) e corrige se vazia
+        if (!pedidoNovo) p('Pedido de compra', true, `Retomando pedido de compra id ${pedidoId}.`);
+        // pedido criado antes (versão antiga ou parada no meio) ou que não gravou: condição / comentário em branco → corrige
+        const cab = await getPurchaseOrder(s, pedidoId).catch(() => null);
+        const faltaCond = cab && !String(cab.condicaoPagamento || '').trim();
+        const faltaCom = cab && !String(cab.comentario || '').includes(mk);
+        if (faltaCond || faltaCom) {
+          const r = await updatePurchaseOrderHeader(s, pedidoId, {
+            paymentCondition: faltaCond ? pag.condicao : null,
+            comments: faltaCom ? [comentarioEntrada, String(cab.comentario || '').trim()].filter(Boolean).join(' | ') : null,
+          });
+          p('Pedido de compra', r.aplicado, r.aplicado
+            ? `Corrigido no pedido: ${[faltaCond && `condição ${pag.condicao}`, faltaCom && 'comentário padrão'].filter(Boolean).join(' e ')}.`
+            : `Não deu para corrigir o pedido em branco: ${r.motivo}.`);
+          if (faltaCond) {
+            const conf = await getPurchaseOrder(s, pedidoId).catch(() => null);
+            if (!String(conf?.condicaoPagamento || '').trim()) {
+              throw Object.assign(new Error(`O pedido ${cab.numero || pedidoId} ficou sem Condição de Pagamento (obrigatória) — preencha "${pag.condicao}" no ESL e lance de novo.`), { etapa: 'Pedido de compra' });
+            }
+          }
+        }
+        L.step(key, 'entrada', { pedidoCabOk: true });
+      }
 
       // itens do pedido: concilia com o que já está no ESL (retomada não duplica)
       const casaPedido = (lista, it) => {
@@ -406,7 +441,15 @@ export async function lancarPecas(s, payload, { commit }) {
       await setStorageInvoiceComments(s, invoiceId, comentarioEntrada);
       L.step(key, 'entrada', { invoiceId, itensOk: [] });
       p('Entrada no estoque', true, `NF de entrada com pedido ${pedido.numero} criada (id ${invoiceId}, tipo Pedido).`);
-    } else p('Entrada no estoque', true, `Retomando NF de entrada id ${invoiceId}.`);
+    } else {
+      p('Entrada no estoque', true, `Retomando NF de entrada id ${invoiceId}.`);
+      // NF criada antes com comentário em branco (ou sem a marca): corrige — a marca é o que identifica a NF desta nota
+      const atual = String((await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null))?.comments || '').trim();
+      if (!atual.includes(mk)) {
+        await setStorageInvoiceComments(s, invoiceId, [comentarioEntrada, atual].filter(Boolean).join(' | '));
+        p('Entrada no estoque', true, atual ? 'Comentário padrão (NF/placa/marca) incluído na NF de entrada.' : 'Comentário em branco corrigido (NF/placa/marca).');
+      }
+    }
     // Confere no ESL o tipo gravado antes de colocar itens (também ao retomar)
     const tipoGravado = await tipoEntrada(s, invoiceId);
     if (tipoGravado && !norm(tipoGravado).includes(norm(tipoNf))) {
@@ -646,6 +689,10 @@ export async function lancarPecas(s, payload, { commit }) {
 
     // Só entrada no estoque (compra para estoque): termina aqui, sem OS e sem baixa.
     if (os.modo === 'nenhuma') {
+      // PDF do pedido de compra (Ações › Imprimir do ESL), capturado em aba própria — falha vira aviso, não erro
+      ctx(s.page, `NF ${nf.numero} · PDF do pedido de compra`);
+      const imp = await registrarImpressao(s, key);
+      if (imp) p('Impressão do pedido', !!imp.ok, imp.ok ? `PDF do pedido ${imp.pedidoNumero || imp.pedidoId} salvo para impressão.` : `PDF do pedido não capturado: ${imp.erro}. Dá para gerar depois pelo Histórico.`);
       const reg = L.finish(key, 'concluido', { resultado: { invoiceId, somenteEntrada: true, valor: vEsp } });
       return {
         ok: true, somenteEntrada: true, passos, itens: itensResumo(), registro: reg, invoiceId, tipoEntrada: await tipoEntrada(s, invoiceId),
@@ -758,6 +805,9 @@ export async function lancarPecas(s, payload, { commit }) {
     L.step(key, 'baixa', { ok: true });
     p('Baixa no estoque', true, `Saída de peças id ${wId}: ${wm.length} item(ns), ${qBaixa} un.`);
 
+    ctx(s.page, `NF ${nf.numero} · PDF do pedido de compra`);
+    const imp = await registrarImpressao(s, key);
+    if (imp) p('Impressão do pedido', !!imp.ok, imp.ok ? `PDF do pedido ${imp.pedidoNumero || imp.pedidoId} salvo para impressão.` : `PDF do pedido não capturado: ${imp.erro}. Dá para gerar depois pelo Histórico.`);
     const reg = L.finish(key, 'concluido', { resultado: { invoiceId, osId, osNumero: osInfo.numero, withdrawalId: wId, valor: vEsp } });
     return {
       ok: true, passos, itens: itensResumo(), registro: reg, osId, osNumero: osInfo.numero, invoiceId, withdrawalId: wId, tipoEntrada: await tipoEntrada(s, invoiceId),

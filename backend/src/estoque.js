@@ -158,6 +158,23 @@ export async function createPurchaseOrder(s, o) {
   );
 }
 
+/** Corrige o cabeçalho de um pedido já criado (condição de pagamento / comentário em branco). Campos travados → avisa. */
+export async function updatePurchaseOrderHeader(s, orderId, o) {
+  const P = 'purchase_order_product';
+  return withPage(s, async (page) =>
+    withShot(page, async () => {
+      await open(page, `/purchase/order/products/${orderId}/edit`);
+      const travados = await page.evaluate((P) => [`${P}[payment_condition]`, `${P}[comments]`]
+        .filter((n) => document.querySelector(`[name="${n}"]`)?.disabled), P);
+      if (travados.length) return { aplicado: false, motivo: 'o ESL não deixa editar este pedido (já recebido?)' };
+      if (o.paymentCondition != null) await setText(page, `${P}[payment_condition]`, o.paymentCondition);
+      if (o.comments != null) await setText(page, `${P}[comments]`, o.comments);
+      await saveMainForm(page, /\/purchase\/order\/products\/(\d+)\/edit/);
+      return { aplicado: true };
+    })
+  );
+}
+
 /** Item do pedido de compra. it = { productId, productText, quantidade, valorUnitario, comments } */
 export async function addPurchaseOrderItem(s, orderId, it) {
   return withPage(s, async (page) =>

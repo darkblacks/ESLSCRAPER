@@ -202,7 +202,7 @@ export async function findStorageInvoices(s, tipo, { numero, issuerId }) {
 /** Cabeçalho do pedido de compra (sequence_code = nº do pedido, que vira o nº da NF de entrada com pedido). */
 export async function getPurchaseOrder(s, id) {
   const o = await apiGet(s, `/purchase/order/products/${id}.json`);
-  return { id: o.id, numero: o.sequence_code, status: o.status, fornecedorId: o.provider_id, filialId: o.corporation_id, comentario: o.comments || '' };
+  return { id: o.id, numero: o.sequence_code, status: o.status, fornecedorId: o.provider_id, filialId: o.corporation_id, comentario: o.comments || '', condicaoPagamento: o.payment_condition || '' };
 }
 
 /** Itens do pedido de compra. */

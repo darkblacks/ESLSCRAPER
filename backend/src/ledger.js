@@ -3,9 +3,12 @@
 //
 // Registro = { docKey, tipo: 'servico'|'pecas', status: 'em_andamento'|'concluido'|'erro',
 //              numero, serie, chave, fornecedor, cnpj, inicio, fim, usuario,
+//              lote: 'LOTE-AAAAMMDD-XXXX' (último envio que processou a nota), lotes: [todos os lotes em que passou],
 //              etapas: { <etapa>: { ok, em, ...dados } }, eventos: [ {em, msg} ] }
+//              etapas.impressao = { ok, pedidoId, pedidoNumero, arquivo, bytes, erro } (PDF do pedido de compra)
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const DATA_DIR = path.resolve('data');
 const FILE = path.join(DATA_DIR, 'lancamentos-xml.json');
@@ -80,6 +83,23 @@ export function begin(key, info) {
     : { docKey: key, ...info, status: 'em_andamento', inicio: new Date().toISOString(), etapas: {}, eventos: [] };
   write(FILE, db);
   return db[key];
+}
+
+/** ID de lote legível: LOTE-AAAAMMDD-XXXX (data de São Paulo + 4 caracteres aleatórios). */
+export function novoLoteId(d = new Date()) {
+  const sp = new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 10).replace(/-/g, '');
+  const rnd = crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 4);
+  return `LOTE-${sp}-${rnd}`;
+}
+
+/** Liga a nota ao lote em que está sendo processada (guarda também o histórico de lotes). */
+export function marcarLote(key, loteId) {
+  if (!loteId) return;
+  const db = read(FILE);
+  if (!db[key]) return;
+  db[key].lote = loteId;
+  db[key].lotes = [...new Set([...(db[key].lotes || []), loteId])];
+  write(FILE, db);
 }
 
 export function step(key, etapa, dados) {

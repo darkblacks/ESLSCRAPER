@@ -2,6 +2,23 @@
 
 _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
 
+## 26/11/2026 — Impressão dos pedidos de compra + ID do lote
+
+- **ID do lote** `LOTE-AAAAMMDD-XXXX` criado a cada envio (`L.novoLoteId`, em `startBatch` e nas rotas de lançamento
+  avulso); cada nota guarda `lote` (último) e `lotes` (todos). Aparece ao lado do progresso do lote e no Histórico.
+- **Imprimir do ESL** = `window.open('/purchase/order/products/print?ids=<pedido>')`: página HTML que chama `print()` ao
+  carregar; UM pedido por vez (lista de ids só imprime o 1º). O robô abre essa página numa aba própria da mesma sessão,
+  com `window.print` desligado, e salva `page.pdf` (mídia print) em `data/pedidos/<id>.pdf`. Etapa `impressao` no
+  histórico. Falha não derruba o lançamento (passo "Impressão do pedido" com ok=false). Precisa de HEADLESS=true.
+- API: `GET /api/xml/historico?lote&status&nf&de&ate&tipo`; `GET /api/xml/historico/:docKey/pedido.pdf` (captura na hora se
+  não houver e houver sessão); `GET /api/xml/historico/pedidos.pdf?...` = PDF único, só notas concluídas, em ordem de
+  lançamento (cabeçalhos `X-Pedidos-Incluidos` / `X-Pedidos-Faltaram`).
+- **Completar histórico** (botão no Histórico → `POST /api/xml/historico/completar`, em blocos de 15): notas sem lote
+  ganham `LOTE-AAAAMMDD-ANT` (dia do lançamento); notas de peças concluídas com pedido e sem PDF têm o PDF capturado.
+  Idempotente; para se o login cair.
+- Site (Histórico): filtros, coluna Lote (clique filtra), "Imprimir" por nota e "Imprimir Tudo"; PDF num iframe fora da tela
+  + `contentWindow.print()` (se o navegador bloquear, abre o PDF numa aba).
+
 ## 26/11/2026 — NF de entrada como Pedido: pelo Pedido de Compra
 
 - A tela `/storage/invoice/products/new` **não tem campo de tipo**: tudo salvo por ela fica "Avulsa" (conferido no ESL).
@@ -28,6 +45,11 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
   Já usado: vínculo rápido (`linkOrderItemRapido`, qtde < 1000, confere pela API; falha de envio → caminho pela tela).
   Próximos: itens do pedido, peças na OS, itens da baixa e exclusão pelo mesmo caminho — antes, capturar o envio real
   da tela (formato dos números) para copiar idêntico.
+- Pedido de compra: **Condições de Pagamento** padronizada (`condicaoPagamentoDe` em nfe.js): só "A PRAZO" | "CARTAO CREDITO" |
+  "A VISTA" (textos que já existem no ESL); vem do XML (pag/detPag + cobr/dup), nunca em branco (padrão A PRAZO).
+  `payload.condicaoPagamento` (um dos três) tem prioridade, se o site mandar.
+- Comentário padrão do pedido e da NF de entrada: `PLACA XXX0X00 NF: nº série s | Chave … | [XML …] | texto do usuário`
+  (placa = da OS ou a achada no texto da NF). Ao retomar, pedido com condição/comentário em branco e NF sem a marca são corrigidos.
 - **Ainda não rodado com gravação.** Validar com UMA nota, com autorização.
 
 ## Estado atual
