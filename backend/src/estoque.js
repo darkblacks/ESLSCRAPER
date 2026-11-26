@@ -20,8 +20,8 @@
 //  Baixa (Saída):      /purchase/storage/parts_withdrawals/new → purchase_storage_parts_withdrawal[corporation_id*, employee_id,
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
-import { withPage } from './esl.js';
-import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar } from './ui.js';
+import { withPage, apiGet } from './esl.js';
+import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar, esperarTabela } from './ui.js';
 
 const withShot = async (page, fn) => {
   try {
@@ -162,7 +162,10 @@ export async function createPurchaseOrder(s, o) {
 export async function addPurchaseOrderItem(s, orderId, it) {
   return withPage(s, async (page) =>
     withShot(page, async () => {
-      await open(page, `/purchase/order/products/${orderId}/edit`);
+      // já na tela deste pedido (item anterior acabou de ser salvo)? não recarrega
+      if (!new RegExp(`/purchase/order/products/${orderId}/edit`).test(page.url()) || await page.locator('.modal.in:visible, .swal2-popup:visible').count()) {
+        await open(page, `/purchase/order/products/${orderId}/edit`);
+      }
       await openModal(page, 'Novo Item', 'purchase_item_modal');
       const sc = '#purchase_item_modal';
       await setSelect2(page, 'purchase_order_item[product_id]', it.productId, it.productText, sc);
@@ -178,7 +181,7 @@ export async function addPurchaseOrderItem(s, orderId, it) {
         await page.waitForTimeout(300);
       }
       await saveModal(page, 'purchase_item_modal');
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
     })
   );
 }
@@ -212,7 +215,7 @@ export async function createStorageInvoiceFromOrder(s, o) {
       const nav = page.waitForURL(re, { timeout: 25_000 }).catch(() => {});
       await clickAndConfirm(page, () => modal.locator('button:visible').filter({ hasText: /^\s*Salvar\s*$/ }).first().click());
       await nav;
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
       const m = page.url().match(re);
       await capture(page, m ? 'NF de entrada com pedido criada' : 'ESL não criou a NF de entrada com pedido');
       if (!m) {
@@ -256,6 +259,37 @@ export async function createStorageInvoice(s, h) {
 }
 
 /**
+ * Vínculo RÁPIDO do item do pedido: faz no ESL exatamente o que o "Sim" da janela "Deseja vincular este produto?" faz —
+ * o código do ESL (link_order_item_with_warehouse → actionLinkOrderItemStorageMovements) chama
+ *   _(namespacedUrlFor('/storage/invoice/products/:id/link_order_items')).postJSON({ data: { purchase_order_item_id,
+ *     amount_received: <valor do campo, ex. "328,000">, warehouse_id } })
+ * Aqui a mesma função do ESL é chamada na tela já aberta, sem janela/busca/cliques (lido no JS do ESL em 26/11/2026).
+ * Só usa quando a quantidade é < 1000 (o campo da tela não tem separador de milhar nesse caso — formato idêntico).
+ * Devolve { ok:true } | { ok:false, motivo } — quem chama cai no caminho pela tela se não der.
+ */
+export async function linkOrderItemRapido(s, invoiceId, it) {
+  if (!(Number(it.quantidade) > 0 && Number(it.quantidade) < 1000)) return { ok: false, motivo: 'quantidade fora da faixa do modo rápido' };
+  return withPage(s, async (page) => {
+    if (!/eslcloud\.com\.br\/storage\/invoice\/products\//.test(page.url())) await open(page, `/storage/invoice/products/${invoiceId}/edit`);
+    const r = await page.evaluate(({ invoiceId, data }) => new Promise((res) => {
+      try {
+        if (typeof window.namespacedUrlFor !== 'function' || !window._ || !window._.prototype) return res({ ok: false, motivo: 'funções do ESL indisponíveis na tela' });
+        const url = window.namespacedUrlFor(`/storage/invoice/products/${invoiceId}/link_order_items`);
+        window._(url).postJSON({
+          data,
+          success: (_r, _st, xhr) => res({ ok: true, status: xhr?.status }),
+          error: (xhr) => res({ ok: false, motivo: `ESL respondeu HTTP ${xhr?.status}: ${String(xhr?.responseText || '').replace(/\s+/g, ' ').slice(0, 200)}` }),
+        });
+        setTimeout(() => res({ ok: false, motivo: 'sem resposta do ESL em 20 s', talvez: true }), 20_000);
+      } catch (e) {
+        res({ ok: false, motivo: e.message });
+      }
+    }), { invoiceId, data: { purchase_order_item_id: it.orderItemId, amount_received: brNum(it.quantidade, 3), warehouse_id: it.warehouseId } });
+    return r;
+  });
+}
+
+/**
  * Entrada de UM item do pedido numa NF de entrada COM PEDIDO (como no ESL à mão): aba "Itens do Pedido" › botão 🔗 da linha
  * → janela "Deseja vincular este produto?" (SweetAlert) com Almoxarifado (select2 #order_item_warehouse) e Qtde Recebida
  * (#amount_received) → Sim (clique; Enter se não fechar) → aviso → confere que a Qtde Recebida da linha subiu.
@@ -266,6 +300,7 @@ export async function linkOrderItem(s, invoiceId, it) {
     withShot(page, async () => {
       await open(page, `/storage/invoice/products/${invoiceId}/edit`);
       await openTab(page, 'Itens do Pedido');
+      await esperarTabela(page, '#tab-order-items tbody tr');
       const alvo = { codigo: String(it.codigo).trim(), qtd: Number(it.quantidade) };
       const lerLinha = () => page.evaluate((a) => {
         const num = (t) => Number(String(t).replace(/\./g, '').replace(',', '.'));
@@ -312,12 +347,17 @@ export async function linkOrderItem(s, invoiceId, it) {
       await capture(page, `vincular ${alvo.codigo} ${alvo.qtd} em ${it.warehouseText}`);
       if (!(await swalConfirmar(page))) throw new Error(`O ESL não aceitou o "Sim" do vínculo do item ${alvo.codigo} (nem com Enter).`);
       await fecharAvisosSwal(page, 5000);
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
-      // confere: recarrega e a Qtde Recebida da linha tem que ter subido
-      await open(page, `/storage/invoice/products/${invoiceId}/edit`);
-      await openTab(page, 'Itens do Pedido');
-      const depois = await lerLinha();
-      const recebidoDepois = depois.jaRecebido ? depois.recebido : depois.recebido ?? 0;
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
+      // confere pela API (sem recarregar a tela): a Qtde Recebida do item no pedido tem que ter subido
+      const cab = await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null);
+      let recebidoDepois = 0;
+      for (let t = 0; t < 6 && !(recebidoDepois > (antes.recebido || 0) + 0.0001); t++) {
+        if (t) await page.waitForTimeout(1000);
+        const itensPed = await apiGet(s, `/purchase/order/${cab?.purchase_order_id}/order_items?page=1&per=200`).catch(() => null);
+        const lista = Array.isArray(itensPed) ? itensPed : itensPed?.data || [];
+        const x = lista.find((i) => String(i.purchase_product_code).trim() === alvo.codigo && Math.abs(Number(i.amount) - alvo.qtd) < 0.001);
+        recebidoDepois = Number(x?.amount_received || 0);
+      }
       if (!(recebidoDepois > (antes.recebido || 0) + 0.0001)) {
         await capture(page, `vínculo NÃO confirmado ${alvo.codigo}`);
         throw new Error(`Confirmei o vínculo do item ${alvo.codigo}, mas a Qtde Recebida não mudou no ESL.`);
@@ -353,7 +393,7 @@ export async function addStorageMovement(s, invoiceId, m) {
         await page.waitForTimeout(300);
       }
       await saveModal(page, 'movement_modal');
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}); // não sair antes de o ESL gravar
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {}); // não sair antes de o ESL gravar
     })
   );
 }
@@ -387,7 +427,7 @@ export async function addWithdrawalItem(s, withdrawalId, m) {
       await page.waitForTimeout(600); // o ESL carrega o estoque atual do almoxarifado
       await setText(page, 'storage_movement[amount]', brNum(m.quantidade, 3), sc);
       await saveModal(page, 'withdrawal_movement_modal');
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
     })
   );
 }
@@ -446,6 +486,7 @@ export async function deleteStorageMovement(s, invoiceId, mov) {
     withShot(page, async () => {
       await open(page, `/storage/invoice/products/${invoiceId}/edit`);
       await openTab(page, 'Entrada no Estoque');
+      await esperarTabela(page);
       const alvo = { codigo: String(mov.codigo), qtd: brNum(mov.quantidade, 3), unit: brNum(mov.valorUnitario, 5) };
       let achou = false;
       for (let pagina = 0; pagina < 15 && !achou; pagina++) {
@@ -507,7 +548,7 @@ export async function deleteStorageMovement(s, invoiceId, mov) {
       } finally {
         page.off('dialog', onDialog);
       }
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
       await page.waitForTimeout(800);
       // confere na tela: a linha tem que ter sumido (se havia mais de uma igual, uma a menos)
       const linhasDepois = await contar();
