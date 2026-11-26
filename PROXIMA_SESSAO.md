@@ -13,6 +13,9 @@ _Última atualização: 25/11/2026 (implantação do backend na VPS Foxya)._
 - API: `GET /api/xml/historico?lote&status&nf&de&ate&tipo`; `GET /api/xml/historico/:docKey/pedido.pdf` (captura na hora se
   não houver e houver sessão); `GET /api/xml/historico/pedidos.pdf?...` = PDF único, só notas concluídas, em ordem de
   lançamento (cabeçalhos `X-Pedidos-Incluidos` / `X-Pedidos-Faltaram`).
+- **Completar histórico** (botão no Histórico → `POST /api/xml/historico/completar`, em blocos de 15): notas sem lote
+  ganham `LOTE-AAAAMMDD-ANT` (dia do lançamento); notas de peças concluídas com pedido e sem PDF têm o PDF capturado.
+  Idempotente; para se o login cair.
 - Site (Histórico): filtros, coluna Lote (clique filtra), "Imprimir" por nota e "Imprimir Tudo"; PDF num iframe fora da tela
   + `contentWindow.print()` (se o navegador bloquear, abre o PDF numa aba).
 

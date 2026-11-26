@@ -86,6 +86,35 @@ async function imprimir(r) {
     imprimindo.value = '';
   }
 }
+/** Pega o que já foi lançado: dá lote às notas antigas e captura os PDFs de pedido que faltam (repete até acabar). */
+const completando = ref('');
+async function completarHistorico() {
+  completando.value = 'Começando…';
+  aviso.value = '';
+  let lotes = 0;
+  let feitos = 0;
+  const falhas = [];
+  try {
+    for (let volta = 0; volta < 40; volta++) {
+      const r = await api.completarHistorico();
+      lotes += r.lotesAtribuidos;
+      feitos += r.capturados.length;
+      falhas.push(...r.falhas);
+      completando.value = `PDFs gerados: ${feitos}${r.restantes ? ` · faltam ${r.restantes}` : ''}…`;
+      if (!r.restantes || (!r.capturados.length && r.falhas.length)) break; // acabou, ou só falhando (ex.: login caiu)
+    }
+    aviso.value = [
+      lotes && `${lotes} nota(s) antigas ganharam lote (LOTE-…-ANT)`,
+      `${feitos} PDF(s) de pedido gerados`,
+      falhas.length && `sem PDF: ${falhas.map((f) => `NF ${f.numero} (${f.motivo})`).join('; ')}`,
+    ].filter(Boolean).join(' · ');
+    await carregar();
+  } catch (e) {
+    aviso.value = e.message;
+  } finally {
+    completando.value = '';
+  }
+}
 async function imprimirTudo() {
   imprimindo.value = 'tudo';
   aviso.value = '';
@@ -133,6 +162,10 @@ async function imprimirTudo() {
       <div class="row" style="margin-top: 10px">
         <button type="button" :disabled="carregando" @click="carregar">{{ carregando ? 'Buscando…' : 'Filtrar' }}</button>
         <button type="button" class="ghost" @click="limparFiltros">Limpar filtros</button>
+        <button type="button" class="ghost" :disabled="!!completando || !!imprimindo" @click="completarHistorico"
+          title="Pega o que já foi lançado: lote para as notas antigas e PDF do pedido de compra das notas concluídas que ainda não têm">
+          {{ completando || 'Completar histórico' }}
+        </button>
         <span class="spacer" />
         <button type="button" :disabled="!imprimiveis.length || !!imprimindo" @click="imprimirTudo"
           :title="'Um PDF só com os pedidos de compra das notas inseridas com sucesso' + (filtros.lote ? ' do lote ' + filtros.lote : ' dos filtros')">

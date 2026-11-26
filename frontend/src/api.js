@@ -126,4 +126,5 @@ export const api = {
   // PDF do pedido de compra de uma nota / de todas as notas concluídas dos filtros (Imprimir Tudo)
   pedidoPdf: (docKey) => pdf(`/api/xml/historico/${encodeURIComponent(docKey)}/pedido.pdf`),
   pedidosPdf: (filtros = {}) => pdf('/api/xml/historico/pedidos.pdf' + q(filtros)),
+  completarHistorico: () => call('POST', '/api/xml/historico/completar'),
 };

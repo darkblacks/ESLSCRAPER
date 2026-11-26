@@ -127,3 +127,43 @@ export async function pdfMesclado(s, registros, { max = 200 } = {}) {
   if (!buffers.length) throw Object.assign(new Error(faltaram[0]?.motivo || 'Nenhum pedido para imprimir com esses filtros.'), { status: faltaram.length ? 409 : 404, faltaram });
   return { pdf: mesclarPdfs(buffers), incluidas, faltaram };
 }
+
+/** Lote das notas lançadas antes de existir o ID de lote: um por dia de início (LOTE-AAAAMMDD-ANT). */
+export const loteAntigoDe = (r) => {
+  const d = new Date(r.inicio || Date.now());
+  const sp = new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 10).replace(/-/g, '');
+  return `LOTE-${sp}-ANT`;
+};
+
+/**
+ * "Completar histórico": pega o que já foi lançado e completa o que falta para imprimir.
+ *  1) notas sem lote ganham LOTE-AAAAMMDD-ANT (pelo dia em que foram lançadas);
+ *  2) notas de peças CONCLUÍDAS com pedido de compra e sem PDF → captura o PDF agora (com a sessão do ESL).
+ * Faz no máximo `max` capturas por chamada (o site chama de novo até `restantes` = 0). Idempotente.
+ */
+export async function completarHistorico(s, { max = 15 } = {}) {
+  const todos = L.all();
+  let lotesAtribuidos = 0;
+  for (const r of todos) {
+    if (!r.lote && !(r.lotes || []).length) {
+      L.marcarLote(r.docKey, loteAntigoDe(r));
+      lotesAtribuidos++;
+    }
+  }
+  const pendentes = todos
+    .map(resumoHistorico)
+    .filter((r) => r.tipo === 'pecas' && r.status === 'concluido' && r.pedidoId && !r.temPdf)
+    .sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
+  const capturados = [];
+  const falhas = [];
+  for (const r of pendentes.slice(0, max)) {
+    const res = await registrarImpressao(s, r.docKey);
+    if (res?.ok) capturados.push({ numero: r.numero, pedido: res.pedidoNumero || res.pedidoId });
+    else {
+      falhas.push({ numero: r.numero, motivo: res?.erro || 'erro desconhecido' });
+      if (/sess[aã]o expirada|sign_in/i.test(res?.erro || '')) break; // login caiu: para aqui, o resto fica para depois
+    }
+  }
+  const restantes = Math.max(0, pendentes.length - capturados.length - falhas.length);
+  return { lotesAtribuidos, capturados, falhas, restantes, totalPendentes: pendentes.length };
+}

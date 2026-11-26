@@ -313,6 +313,10 @@ app.get('/api/xml/historico/pedidos.pdf', requireKnownSession, wrap(async (req, 
   res.set({ 'X-Pedidos-Incluidos': String(r.incluidas.length), 'X-Pedidos-Faltaram': encodeURIComponent(r.faltaram.map((f) => `NF ${f.numero}: ${f.motivo}`).join(' | ').slice(0, 1500)) });
   enviarPdf(res, r.pdf, `pedidos-${String(req.query.lote || 'historico').replace(/[^\w-]/g, '')}.pdf`);
 }));
+// "Completar histórico": lote para notas antigas + PDF dos pedidos já lançados que ainda não têm (em blocos)
+app.post('/api/xml/historico/completar', requireSession, wrap(async (req, res) => {
+  res.json(await IMP.completarHistorico(req.esl, { max: Math.min(30, Number(req.query.max) || 15) }));
+}));
 // PDF do pedido de compra de UMA nota (salvo; se ainda não houver, captura agora com a sessão do ESL)
 app.get('/api/xml/historico/:docKey/pedido.pdf', requireKnownSession, wrap(async (req, res) => {
   const pdf = await IMP.pdfDaNota(req.esl, req.params.docKey);
