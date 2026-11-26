@@ -111,6 +111,60 @@ export async function formErrors(page) {
 const PERGUNTA_OK = /(certeza|deseja|confirma).*(gravar|salvar|incluir|adicionar|lan[cç]ar|continuar)|deseja (realmente )?(gravar|salvar|continuar)/i;
 const PERGUNTA_NAO = /exclu|remov|apag|cancelar a|estornar/i;
 
+/** Texto da janela SweetAlert visível (ou null). */
+export async function swalTexto(page) {
+  return page.evaluate(() => {
+    const S = window.Swal || window.swal;
+    if (!S || !S.isVisible || !S.isVisible()) return null;
+    const pop = S.getPopup && S.getPopup();
+    return (pop ? pop.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  }).catch(() => null);
+}
+
+/**
+ * Confirma a janela SweetAlert aberta como uma pessoa faria: clica em "Sim/OK" e, se ela não fechar,
+ * foca o botão de confirmar e dá ENTER (no ESL às vezes o clique programático não fecha a janela).
+ * Devolve true se a janela com esse texto fechou.
+ */
+export async function swalConfirmar(page) {
+  const antes = await swalTexto(page);
+  if (!antes) return true;
+  await page.evaluate(() => (window.Swal || window.swal).clickConfirm()).catch(() => {});
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    await page.waitForTimeout(500);
+    const agora = await swalTexto(page);
+    if (agora !== antes) return true; // fechou ou já é outra janela
+    const btn = page.locator('.swal2-confirm:visible').first();
+    if (tentativa === 0) {
+      await btn.focus().catch(() => {});
+      await page.keyboard.press('Enter');
+    } else await btn.click({ timeout: 2000 }).catch(() => {});
+  }
+  return (await swalTexto(page)) !== antes;
+}
+
+/** Fecha avisos de sucesso que o ESL mostra depois de gravar/excluir ("...com sucesso" › OK/Enter). Erro → lança. */
+export async function fecharAvisosSwal(page, ms = 3000) {
+  const fim = Date.now() + ms;
+  const vistos = [];
+  while (Date.now() < fim) {
+    const t = await swalTexto(page);
+    if (!t) {
+      if (vistos.length) break;
+      await page.waitForTimeout(250);
+      continue;
+    }
+    if (/erro|não (foi possível|pode)|inválid|falh/i.test(t)) {
+      await swalConfirmar(page);
+      throw new Error(`O ESL respondeu: ${t}`);
+    }
+    if (!/sucesso|exclu[ií]d[oa]|removid[oa]|salv[oa]|gravad[oa]|atualizad[oa]/i.test(t)) break; // não é aviso: quem chamou decide
+    vistos.push(t);
+    await swalConfirmar(page);
+  }
+  return vistos;
+}
+
 export async function confirmDialogs(page, ms = 4000) {
   const confirmadas = [];
   const fim = Date.now() + ms;
@@ -123,7 +177,7 @@ export async function confirmDialogs(page, ms = 4000) {
     }).catch(() => null);
     if (st) {
       if (/sucesso|salv[oa] com|gravad[oa]/i.test(st.texto) && !PERGUNTA_OK.test(st.texto)) {
-        await page.evaluate(() => (window.Swal || window.swal).clickConfirm()).catch(() => {});
+        await swalConfirmar(page);
         confirmadas.push(st.texto);
         break;
       }
@@ -140,10 +194,10 @@ export async function confirmDialogs(page, ms = 4000) {
         await page.evaluate(() => (window.Swal || window.swal).clickCancel()).catch(() => {});
         throw new Error(`O ESL fez uma pergunta não prevista (cancelada por segurança): "${st.texto}"`);
       }
-      await page.evaluate(() => (window.Swal || window.swal).clickConfirm());
+      if (!(await swalConfirmar(page))) throw new Error(`Não consegui confirmar a pergunta do ESL (nem com Enter): "${st.texto}"`);
       confirmadas.push(st.texto);
-      await page.waitForTimeout(600);
-      continue; // pode vir outra pergunta em seguida
+      await page.waitForTimeout(300);
+      continue; // pode vir outra pergunta (ou o aviso de sucesso) em seguida
     }
     if (confirmadas.length) break; // já confirmou e não veio outra
     await page.waitForTimeout(250);
