@@ -20,7 +20,7 @@
 //  Baixa (Saída):      /purchase/storage/parts_withdrawals/new → purchase_storage_parts_withdrawal[corporation_id*, employee_id,
 //                      withdrawn_at_date*, withdrawn_at_time*, comments] — salvar antes de incluir itens;
 //                      itens: "Novo Item" › #withdrawal_movement_modal storage_movement[purchase_product_id*, amount*, purchase_warehouse_id*]
-import { withPage } from './esl.js';
+import { withPage, apiGet } from './esl.js';
 import { open, setSelect2, setText, selectByLabel, setCheckbox, saveMainForm, openTab, openModal, saveModal, brNum, shot, nowBr, assertValue, capture, clickAndConfirm, formErrors, swalConfirmar, fecharAvisosSwal, select2Pesquisar } from './ui.js';
 
 const withShot = async (page, fn) => {
@@ -162,7 +162,10 @@ export async function createPurchaseOrder(s, o) {
 export async function addPurchaseOrderItem(s, orderId, it) {
   return withPage(s, async (page) =>
     withShot(page, async () => {
-      await open(page, `/purchase/order/products/${orderId}/edit`);
+      // já na tela deste pedido (item anterior acabou de ser salvo)? não recarrega
+      if (!new RegExp(`/purchase/order/products/${orderId}/edit`).test(page.url()) || await page.locator('.modal.in:visible, .swal2-popup:visible').count()) {
+        await open(page, `/purchase/order/products/${orderId}/edit`);
+      }
       await openModal(page, 'Novo Item', 'purchase_item_modal');
       const sc = '#purchase_item_modal';
       await setSelect2(page, 'purchase_order_item[product_id]', it.productId, it.productText, sc);
@@ -313,11 +316,16 @@ export async function linkOrderItem(s, invoiceId, it) {
       if (!(await swalConfirmar(page))) throw new Error(`O ESL não aceitou o "Sim" do vínculo do item ${alvo.codigo} (nem com Enter).`);
       await fecharAvisosSwal(page, 5000);
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
-      // confere: recarrega e a Qtde Recebida da linha tem que ter subido
-      await open(page, `/storage/invoice/products/${invoiceId}/edit`);
-      await openTab(page, 'Itens do Pedido');
-      const depois = await lerLinha();
-      const recebidoDepois = depois.jaRecebido ? depois.recebido : depois.recebido ?? 0;
+      // confere pela API (sem recarregar a tela): a Qtde Recebida do item no pedido tem que ter subido
+      const cab = await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null);
+      let recebidoDepois = 0;
+      for (let t = 0; t < 6 && !(recebidoDepois > (antes.recebido || 0) + 0.0001); t++) {
+        if (t) await page.waitForTimeout(1000);
+        const itensPed = await apiGet(s, `/purchase/order/${cab?.purchase_order_id}/order_items?page=1&per=200`).catch(() => null);
+        const lista = Array.isArray(itensPed) ? itensPed : itensPed?.data || [];
+        const x = lista.find((i) => String(i.purchase_product_code).trim() === alvo.codigo && Math.abs(Number(i.amount) - alvo.qtd) < 0.001);
+        recebidoDepois = Number(x?.amount_received || 0);
+      }
       if (!(recebidoDepois > (antes.recebido || 0) + 0.0001)) {
         await capture(page, `vínculo NÃO confirmado ${alvo.codigo}`);
         throw new Error(`Confirmei o vínculo do item ${alvo.codigo}, mas a Qtde Recebida não mudou no ESL.`);

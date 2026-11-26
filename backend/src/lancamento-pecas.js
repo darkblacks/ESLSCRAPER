@@ -60,12 +60,16 @@ async function storageInvoicesMentioning(s, issuerId, nf) {
   const arr = Array.isArray(list) ? list : list.data || [];
   const re = new RegExp(`\\bN\\.?\\s*F\\.?(?:-?e)?\\s*[:nº°o.]*\\s*0*${nf.numero}\\b`, 'i');
   const out = [];
-  for (const x of arr.slice(0, 25)) {
-    const d = await apiGet(s, `/storage/invoice/products/${x.id}.json`).catch(() => null);
-    const c = String(d?.comments || '');
-    if (re.test(c) || (nf.chave && c.includes(nf.chave))) {
-      out.push({ id: x.id, numero: x.number, tipo: x.invoice_type_formatted, data: x.emission_at, total: Number(x.total || 0), comentario: c, url: `/storage/invoice/products/${x.id}/edit` });
-    }
+  const alvo = arr.slice(0, 25);
+  for (let i = 0; i < alvo.length; i += 5) { // 5 por vez: bem mais rápido e sem sobrecarregar o ESL
+    const lote = alvo.slice(i, i + 5);
+    const dets = await Promise.all(lote.map((x) => apiGet(s, `/storage/invoice/products/${x.id}.json`).catch(() => null)));
+    lote.forEach((x, k) => {
+      const c = String(dets[k]?.comments || '');
+      if (re.test(c) || (nf.chave && c.includes(nf.chave))) {
+        out.push({ id: x.id, numero: x.number, tipo: x.invoice_type_formatted, data: x.emission_at, total: Number(x.total || 0), comentario: c, url: `/storage/invoice/products/${x.id}/edit` });
+      }
+    });
   }
   return out;
 }

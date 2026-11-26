@@ -8,7 +8,10 @@ export const shot = async (page, fullPage = true) =>
 /* ---------------- trilha de telas (o que o ESL mostrava a cada Salvar) ---------------- */
 /** Define o contexto das próximas capturas (ex.: "NF 72753 · Entrada · item 3 (567016)"). */
 export function ctx(page, label) {
+  const agora = Date.now();
+  if (page._ctx && page._ctxDesde) console.log(`[tempo] ${((agora - page._ctxDesde) / 1000).toFixed(1)}s — ${page._ctx}`);
   page._ctx = label;
+  page._ctxDesde = agora;
 }
 /** Tira um print da tela atual e guarda na trilha da página (se a trilha estiver ligada). */
 export async function capture(page, etapa) {

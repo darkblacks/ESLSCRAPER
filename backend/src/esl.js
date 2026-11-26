@@ -297,8 +297,13 @@ export async function exportState(s) {
 /* ------------------------------------------------------------------ */
 
 export async function goto(page, route) {
+  const t0 = Date.now();
   const resp = await page.goto(BASE + route, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+  const t1 = Date.now();
+  let ocioso = true;
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => (ocioso = false));
+  const t2 = Date.now();
+  if (t2 - t0 > 4000) console.log(`[tempo] abrir ${route.split('?')[0]}: ${((t1 - t0) / 1000).toFixed(1)}s carregando + ${((t2 - t1) / 1000).toFixed(1)}s esperando a rede${ocioso ? '' : ' (estourou 15s)'}`);
   if (/\/users\/sign_in/.test(page.url())) {
     const e = new Error('Sessão expirada no ESL. Faça login de novo.');
     e.status = 401;
