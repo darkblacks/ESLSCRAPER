@@ -97,6 +97,24 @@ export function log(key, msg) {
   write(FILE, db);
 }
 
+/** Guarda as etapas atuais em `anteriores` e recomeça do zero (ex.: nota refeita como Pedido). */
+export function arquivarEtapas(key, info = {}) {
+  const db = read(FILE);
+  if (!db[key]) return;
+  db[key].anteriores = [...(db[key].anteriores || []), { ...info, etapas: db[key].etapas, fim: db[key].fim, arquivadoEm: new Date().toISOString() }];
+  db[key].etapas = {};
+  write(FILE, db);
+  return db[key];
+}
+export function atualizarAnterior(key, invoiceId, dados) {
+  const db = read(FILE);
+  const a = (db[key]?.anteriores || []).find((x) => String(x.invoiceId) === String(invoiceId));
+  if (!a) return;
+  Object.assign(a, dados, { atualizadoEm: new Date().toISOString() });
+  write(FILE, db);
+  return a;
+}
+
 export function finish(key, status, extra = {}) {
   const db = read(FILE);
   if (!db[key]) return;

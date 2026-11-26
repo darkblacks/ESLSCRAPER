@@ -134,7 +134,8 @@ function payload(l) {
   const nf = l.p.nf;
   return {
     nf, date: l.p.date, time: l.p.time,
-    tipoEntrada: pad.tipoNf || 'pedido',
+    tipoEntrada: l.refazer ? 'pedido' : pad.tipoNf || 'pedido',
+    refazerComoPedido: !!l.refazer, // lançada aqui como Avulsa → nova NF como Pedido e tira os itens da avulsa
     fornecedor: { id: l.fornecedorSel.id, nome: l.fornecedorSel.text },
     filial: l.filialNf || pad.filial,
     almoxarifado: { id: pad.almoxarifado.id, nome: pad.almoxarifado.text },
@@ -169,11 +170,24 @@ function lancarTudo() {
   const n = prontas.value.length;
   const cad = prontas.value.reduce((a, l) => a + novas(l), 0);
   const soEstoque = prontas.value.filter((l) => destino(l) === 'estoque').length;
+  const refazer = prontas.value.filter((l) => l.refazer);
   const comOs = n - soEstoque;
   if (!confirm(`Lançar ${n} NF(s) de peças (${fmt(total.value)})?\n\n${cad ? `• cadastrar ${cad} peça(s) nova(s)\n` : ''}• entrada no almoxarifado ${pad.almoxarifado.text} (todas), NF de entrada como ${pad.tipoNf === 'avulsa' ? 'AVULSA' : 'PEDIDO'}\n` +
     (comOs ? `• ${comOs} NF(s): aplicar na OS aberta de cada placa${pad.criarOs ? ' (ou criar nova)' : ''} e dar baixa\n` : '') +
-    (soEstoque ? `• ${soEstoque} NF(s): só entrada no estoque (sem OS, sem baixa)` : ''))) return;
+    (soEstoque ? `• ${soEstoque} NF(s): só entrada no estoque (sem OS, sem baixa)\n` : '') +
+    (refazer.length ? `• ${refazer.length} NF(s) refeitas como PEDIDO: depois da NF nova conferida, os itens SAEM da NF avulsa antiga (${refazer.map((l) => 'id ' + l.p.duplicidade.refazivel.invoiceId).join(', ')})` : ''))) return;
   lancar(prontas.value, payload);
+}
+
+/** Nota lançada aqui como Avulsa (só entrada): refazer como Pedido. */
+function refazerComoPedido(l) {
+  l.refazer = true;
+  l.estado = 'conferir';
+  l.erro = '';
+}
+function desfazerRefazer(l) {
+  l.refazer = false;
+  l.estado = 'bloqueada';
 }
 
 /** Frase clara: lançou, não lançou ou lançou em parte. */
@@ -281,6 +295,13 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                 <small v-if="l.erro && !l.resultado?.itens" class="msg block">{{ l.erro }}</small>
                 <a v-if="l.resultado?.itens && !l.aberta" class="link small" @click="l.aberta = true">ver item por item</a>
                 <small v-if="l.estado === 'bloqueada'" class="msg block">{{ (l.p?.duplicidade?.motivos || []).join(' ') }}</small>
+                <template v-if="l.p?.duplicidade?.refazivel && !['lançada', 'na fila', 'lançando'].includes(l.estado)">
+                  <button v-if="!l.refazer" type="button" class="ghost small" style="margin-top: 4px" @click="refazerComoPedido(l)">
+                    Refazer como Pedido
+                  </button>
+                  <small v-if="!l.refazer" class="muted block">Foi lançada como {{ l.p.duplicidade.refazivel.tipo }} (NF de entrada id {{ l.p.duplicidade.refazivel.invoiceId }}). Cria a NF como Pedido e, depois de conferida, tira os itens da avulsa.</small>
+                  <small v-else class="warnc block">Será refeita como PEDIDO: os itens saem da NF avulsa id {{ l.p.duplicidade.refazivel.invoiceId }} depois que a nova estiver conferida. <a class="link" @click="desfazerRefazer(l)">cancelar</a></small>
+                </template>
                 <small v-if="l.p?.duplicidade?.retomavel" class="warnc block">incompleta antes — será retomada</small>
               </td>
               <td><a class="link" @click="l.aberta = !l.aberta">{{ l.aberta ? 'fechar' : 'detalhes' }}</a>

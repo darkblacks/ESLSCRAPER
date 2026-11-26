@@ -204,6 +204,22 @@ export async function pageShot(s, route, tab) {
   });
 }
 
+/** Acrescenta um texto ao comentário do cabeçalho da NF de entrada (mantém o que já existe). */
+export async function appendStorageInvoiceComment(s, invoiceId, texto) {
+  const I = 'storage_invoice_product';
+  return withPage(s, async (page) =>
+    withShot(page, async () => {
+      await open(page, `/storage/invoice/products/${invoiceId}/edit`);
+      const atual = await page.$eval(`[name="${I}[comments]"]`, (e) => e.value || '').catch(() => '');
+      if (atual.includes(texto)) return invoiceId;
+      await setText(page, `${I}[comments]`, [atual.trim(), texto].filter(Boolean).join(' | '));
+      await page.waitForTimeout(300);
+      await saveMainForm(page, /\/storage\/invoice\/products\/(\d+)\/edit/);
+      return invoiceId;
+    })
+  );
+}
+
 /** Ajusta frete/desconto do cabeçalho da NF de entrada (feito depois dos itens, quando o total dos produtos já existe). */
 export async function setStorageInvoiceTotals(s, invoiceId, { frete = 0, desconto = 0 }) {
   const I = 'storage_invoice_product';

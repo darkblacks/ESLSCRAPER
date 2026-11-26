@@ -9,7 +9,7 @@ import {
   findPersonByDocument, findPurchaseInvoice, findStorageInvoices, storageInvoiceMovements, withdrawalMovements,
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
 } from './lookups.js';
-import { createPart, createStorageInvoice, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot } from './estoque.js';
+import { createPart, createStorageInvoice, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
@@ -54,15 +54,31 @@ async function storageInvoicesMentioning(s, issuerId, nf) {
   return out;
 }
 
-export async function checkPartsDuplicate(s, nf, fornecedorId) {
+/**
+ * refazer=true: a nota foi lançada por esta plataforma como AVULSA (só entrada, sem OS/baixa) e vai ser refeita como
+ * PEDIDO → não bloqueia; a NF avulsa antiga é esvaziada depois que a nova estiver conferida (ver lancarPecas).
+ */
+export async function checkPartsDuplicate(s, nf, fornecedorId, { refazer = false } = {}) {
   const key = L.docKey({ chave: nf.chave, cnpj: nf.emitente.cnpj, numero: nf.numero, serie: nf.serie, tipo: 'nfe' });
   const reg = L.get(key);
-  const own = new Set([reg?.etapas?.entrada?.invoiceId].filter(Boolean).map(String));
+  // NFs de entrada desta plataforma para esta nota (a atual e as anuladas ao refazer como Pedido) não contam como duplicidade
+  const own = new Set([reg?.etapas?.entrada?.invoiceId, ...(reg?.anteriores || []).map((a) => a.invoiceId)].filter(Boolean).map(String));
   const out = { docKey: key, bloqueado: false, motivos: [], existentes: [], alertas: [], retomavel: null };
+
+  // Pode ser refeita como Pedido? (lançada aqui como Avulsa, só entrada no estoque)
+  const ent = reg?.etapas?.entrada?.invoiceId;
+  if (reg?.status === 'concluido' && ent && !reg.etapas.os && !reg.etapas.baixa) {
+    const tipo = await tipoEntrada(s, ent);
+    if (tipo && /AVULSA/.test(norm(tipo))) out.refazivel = { invoiceId: ent, tipo };
+  }
+  if (refazer && out.refazivel) {
+    out.refazer = out.refazivel;
+    out.alertas.push(`A NF de entrada avulsa id ${ent} desta nota será esvaziada depois que a NF como Pedido estiver conferida.`);
+  }
 
   // "concluída" pelo histórico, mas a NF de entrada no ESL não bate com o XML → libera para a automação corrigir
   let divergente = null;
-  if (reg?.status === 'concluido' && reg.etapas?.entrada?.invoiceId) {
+  if (!out.refazer && reg?.status === 'concluido' && reg.etapas?.entrada?.invoiceId) {
     const mv = await storageInvoiceMovements(s, reg.etapas.entrada.invoiceId).catch(() => null);
     if (mv) {
       const q = mv.reduce((a, m) => a + m.quantidade, 0);
@@ -75,7 +91,9 @@ export async function checkPartsDuplicate(s, nf, fornecedorId) {
       }
     }
   }
-  if (divergente) {
+  if (out.refazer) {
+    // segue: a nota vai ser lançada de novo como Pedido
+  } else if (divergente) {
     out.retomavel = { status: 'divergente', etapas: Object.keys(reg.etapas || {}), erro: `${divergente} — ao lançar, a automação corrige (inclui o que falta e remove o que sobra).` };
   } else if (reg?.status === 'concluido') {
     out.bloqueado = true;
@@ -209,7 +227,8 @@ export async function lancarPecas(s, payload, { commit }) {
   if (!filial) faltas.push('filial (destinatário)');
   if (!payload.date) faltas.push('data de emissão');
   // Tipo da NF de entrada no ESL: "Pedido" por padrão; "Avulsa" só se pedido explicitamente.
-  const tipoNf = payload.tipoEntrada === 'avulsa' ? 'Avulsa' : 'Pedido';
+  const refazer = !!payload.refazerComoPedido; // nota lançada aqui como Avulsa → refazer como Pedido
+  const tipoNf = payload.tipoEntrada === 'avulsa' && !refazer ? 'Avulsa' : 'Pedido';
   if (payload.tipoEntrada && !['pedido', 'avulsa'].includes(payload.tipoEntrada)) faltas.push('tipo da NF de entrada (pedido ou avulsa)');
   if (!almoxarifado?.id) faltas.push('almoxarifado');
   if (!itens.length) faltas.push('itens');
@@ -247,14 +266,22 @@ export async function lancarPecas(s, payload, { commit }) {
 
   // 1) Revalida duplicidade do XML
   const nfComItens = { ...nf, items: nf.items || itens.map((i) => ({ quantidade: Number(i.quantidade), valorTotal: Math.round(Number(i.quantidade) * Number(i.valorUnitario) * 100) / 100 })) };
-  const dup = await checkPartsDuplicate(s, nfComItens, fornecedor.id);
+  const dup = await checkPartsDuplicate(s, nfComItens, fornecedor.id, { refazer });
   if (dup.bloqueado) return { ok: false, etapa: 'duplicidade', error: dup.motivos.join(' '), duplicidade: dup };
+  const pendentes = () => (L.get(dup.docKey)?.anteriores || []).filter((a) => a.retirada !== 'feita');
+  if (refazer && !dup.refazer && !pendentes().length) {
+    return { ok: false, etapa: 'duplicidade', error: 'Refazer como Pedido só vale para nota lançada por esta plataforma como Avulsa, só com entrada no estoque (sem OS e sem baixa).' };
+  }
   p('Duplicidade do XML', true, dup.retomavel ? 'Processamento anterior incompleto encontrado — retomando.' : 'Nota ainda não lançada no ESL.');
 
   const key = dup.docKey;
   L.lock(key);
   try {
   L.begin(key, { tipo: 'pecas', numero: nf.numero, serie: nf.serie, chave: nf.chave, fornecedor: fornecedor.nome, cnpj: onlyDigits(nf.emitente.cnpj), valor: nf.valorNota, usuario: s.email });
+  if (dup.refazer) {
+    L.arquivarEtapas(key, { invoiceId: dup.refazer.invoiceId, tipo: dup.refazer.tipo, motivo: 'refeita como Pedido', retirada: 'pendente' });
+    p('Refazer como Pedido', true, `A NF avulsa id ${dup.refazer.invoiceId} fica intacta até a NF como Pedido estar conferida; depois os itens saem dela.`);
+  }
   const mk = L.marker(key);
   const E = () => L.get(key).etapas || {};
   const ref = `NF ${nf.numero}${nf.serie ? ' série ' + nf.serie : ''} - ${fornecedor.nome}`;
@@ -481,6 +508,33 @@ export async function lancarPecas(s, payload, { commit }) {
       p('Entrada', true, `Cabeçalho ajustado: desconto R$ ${money(desc)}${frete ? `, frete R$ ${money(frete)}` : ''} (total da NF R$ ${money(vGrav - desc + frete)}).`);
     }
     L.step(key, 'entrada', { ok: true, conferencia: { itens: movs.length, quantidade: qGrav, valor: vGrav } });
+
+    // Refeita como Pedido: agora que a NF nova está conferida, tira os itens da NF avulsa antiga
+    for (const ant of pendentes()) {
+      const old = ant.invoiceId;
+      if (String(old) === String(invoiceId)) continue;
+      ctx(s.page, `NF ${nf.numero} · retirando itens da NF avulsa ${old}`);
+      const tipoOld = await tipoEntrada(s, old);
+      if (tipoOld && !/AVULSA/.test(norm(tipoOld))) {
+        throw Object.assign(new Error(`A NF de entrada antiga id ${old} não é mais Avulsa (está "${tipoOld}") — não mexo nela. Confira no ESL.`), { etapa: 'Retirada da NF avulsa' });
+      }
+      const antigos = await storageInvoiceMovements(s, old);
+      const codigosDaNota = new Set(movs.map((m) => norm(m.codigo)));
+      const estranhos = antigos.filter((m) => !codigosDaNota.has(norm(m.codigo)));
+      if (estranhos.length) {
+        throw Object.assign(new Error(`A NF avulsa id ${old} tem itens que não são desta nota (${estranhos.map((m) => m.codigo).join(', ')}) — não removo nada automaticamente. A NF como Pedido id ${invoiceId} já está feita; tire os itens da avulsa à mão.`), { etapa: 'Retirada da NF avulsa' });
+      }
+      for (const m of antigos) {
+        await deleteStorageMovement(s, old, { codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
+      }
+      const sobrou = await storageInvoiceMovements(s, old);
+      if (sobrou.length) throw Object.assign(new Error(`A NF avulsa id ${old} ainda tem ${sobrou.length} item(ns) depois da retirada. Lance de novo para tentar outra vez.`), { etapa: 'Retirada da NF avulsa' });
+      const cabOld = await apiGet(s, `/storage/invoice/products/${old}.json`).catch(() => null);
+      if (Number(cabOld?.discount_value || 0) || Number(cabOld?.freight_total || 0)) await setStorageInvoiceTotals(s, old, { frete: 0, desconto: 0 });
+      await appendStorageInvoiceComment(s, old, `ANULADA pela automação: itens retirados e lançados na NF de entrada id ${invoiceId} (Pedido) em ${new Date().toLocaleString('pt-BR')}`).catch(() => null);
+      L.atualizarAnterior(key, old, { retirada: 'feita', itensRetirados: antigos.length, novaEntrada: invoiceId });
+      p('Retirada da NF avulsa', true, `${antigos.length} item(ns) retirados da NF avulsa id ${old}; os itens ficam só na NF id ${invoiceId} (Pedido).`);
+    }
 
     // Só entrada no estoque (compra para estoque): termina aqui, sem OS e sem baixa.
     if (os.modo === 'nenhuma') {

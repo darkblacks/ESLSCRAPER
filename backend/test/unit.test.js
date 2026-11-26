@@ -10,7 +10,7 @@ const { parseServiceXml } = await import('../src/nfse.js');
 const L = await import('../src/ledger.js');
 const C = await import('../src/config.js');
 const { checkServiceDuplicate, lancarServico } = await import('../src/lancamento-servicos.js');
-const { lancarPecas } = await import('../src/lancamento-pecas.js');
+const { lancarPecas, checkPartsDuplicate } = await import('../src/lancamento-pecas.js');
 
 test('NF-e de peças: cabeçalho, itens e pistas do texto', () => {
   const nf = parseNfe(NFE);
@@ -133,4 +133,64 @@ test('validação: payload incompleto é recusado antes de qualquer etapa', asyn
   const r = await lancarServico(sessaoProibida, { servicos: [] }, { commit: true });
   assert.equal(r.etapa, 'validação');
   assert.match(r.error, /Faltam/);
+});
+
+/* ---------- refazer como Pedido (nota lançada aqui como Avulsa) ---------- */
+// Sessão falsa só de LEITURA: responde JSON por rota; qualquer outra coisa (página, gravação) quebra o teste.
+const sessaoLeitura = (rotas) => new Proxy({ lastUsed: 0, context: { request: { get: async (url) => {
+  const hit = Object.entries(rotas).find(([k]) => url.includes(k));
+  return { url: () => url, status: () => 200, text: async () => JSON.stringify(hit ? hit[1] : []) };
+} } } }, { get(t, p) { if (p in t || p === 'then') return t[p]; throw new Error(`tocou a sessão: ${String(p)}`); }, set(t, p, v) { t[p] = v; return true; } });
+
+function semearNota(nf, invoiceId, etapasExtras = {}) {
+  const key = L.docKey({ chave: nf.chave, cnpj: nf.emitente.cnpj, numero: nf.numero, serie: nf.serie, tipo: 'nfe' });
+  L.begin(key, { tipo: 'pecas', numero: nf.numero });
+  L.step(key, 'entrada', { invoiceId, ok: true });
+  for (const [k, v] of Object.entries(etapasExtras)) L.step(key, k, v);
+  L.finish(key, 'concluido');
+  return key;
+}
+// itens da NF de entrada no ESL iguais aos do XML (conferência de "já lançada" bate)
+const movsDe = (nf) => nf.items.map((i, k) => ({ id: k + 1, purchase_product_code: i.cProd, amount: i.quantidade, unitary_value: i.valorUnitario, total_value: i.valorTotal }));
+const nfDe = (numero) => { const nf = parseNfe(NFE); return { ...nf, numero, chave: nf.chave.slice(0, -4) + numero.padStart(4, '0') }; };
+
+test('refazer como Pedido: nota lançada aqui como Avulsa (só entrada) pode ser refeita; a avulsa não conta como duplicidade', async () => {
+  const nf = nfDe('7001');
+  semearNota(nf, 143540);
+  const s = sessaoLeitura({ '/storage/invoices/143540/movements': movsDe(nf), '/storage/invoice/products/143540.json': { id: 143540, invoice_type_formatted: 'Avulsa' }, '/storage/invoice/products.json': [{ id: 143540, number: '7001', invoice_type_formatted: 'Avulsa' }] });
+  const preview = await checkPartsDuplicate(s, nf, 1);
+  assert.equal(preview.bloqueado, true);
+  assert.deepEqual(preview.refazivel, { invoiceId: 143540, tipo: 'Avulsa' });
+  const ref = await checkPartsDuplicate(s, nf, 1, { refazer: true });
+  assert.equal(ref.bloqueado, false, ref.motivos.join(' '));
+  assert.equal(ref.refazer.invoiceId, 143540);
+});
+
+test('refazer como Pedido: NÃO vale se já é Pedido, se teve OS/baixa, ou se existe outra NF de entrada da nota', async () => {
+  const a = nfDe('7002'); semearNota(a, 500);
+  const jaPedido = sessaoLeitura({ '/storage/invoices/500/movements': movsDe(a), '/storage/invoice/products/500.json': { id: 500, invoice_type_formatted: 'Pedido' } });
+  assert.equal((await checkPartsDuplicate(jaPedido, a, 1)).refazivel, undefined);
+  assert.equal((await checkPartsDuplicate(jaPedido, a, 1, { refazer: true })).bloqueado, true);
+
+  const b = nfDe('7003'); semearNota(b, 501, { os: { id: 1, numero: 9 }, baixa: { withdrawalId: 3 } });
+  const comOs = sessaoLeitura({ '/storage/invoices/501/movements': movsDe(b), '/storage/invoice/products/501.json': { id: 501, invoice_type_formatted: 'Avulsa' } });
+  assert.equal((await checkPartsDuplicate(comOs, b, 1)).refazivel, undefined);
+  assert.equal((await checkPartsDuplicate(comOs, b, 1, { refazer: true })).bloqueado, true);
+
+  const c = nfDe('7004'); semearNota(c, 502);
+  const outra = sessaoLeitura({ '/storage/invoices/502/movements': movsDe(c), '/storage/invoice/products/502.json': { id: 502, invoice_type_formatted: 'Avulsa' }, '/storage/invoice/products.json': [{ id: 999, number: '7004', invoice_type_formatted: 'Pedido' }] });
+  const r = await checkPartsDuplicate(outra, c, 1, { refazer: true });
+  assert.equal(r.bloqueado, true, 'NF de entrada feita à mão (id 999) continua bloqueando');
+  assert.ok(r.existentes.some((x) => x.id === 999));
+});
+
+test('refazer como Pedido: lançar nota que não é refazível é recusado antes de gravar', async () => {
+  const nf = nfDe('7005');
+  const s = sessaoLeitura({});
+  const r = await lancarPecas(s, {
+    nf, fornecedor: { id: 1, nome: 'F' }, filial: 'X', date: '09/11/2026', almoxarifado: { id: 1, nome: 'A' }, refazerComoPedido: true,
+    itens: nf.items.map((i, k) => ({ ...i, acao: 'existente', produto: { id: 100 + k, text: 'P' } })), os: { modo: 'nenhuma' },
+  }, { commit: true });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Refazer como Pedido só vale/);
 });
