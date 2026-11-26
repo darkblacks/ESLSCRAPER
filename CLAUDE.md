@@ -46,7 +46,7 @@ Automação do ESL Cloud da Transmassa (`https://transmassa.eslcloud.com.br`) vi
 2. Não criar OS, cadastrar peças, movimentar estoque, excluir registros ou alterar dados da Transmassa em testes.
 3. Fluxos (não simplificar): Serviços = duplicidade geral → OS ativa/nova → duplicidade na OS → serviço →
    comentário → conferência → histórico. Peças = duplicidade geral → peças cadastradas/cadastro → **pedido de compra** →
-   entrada no estoque **com pedido** (tipo "Pedido", nunca "Avulsa") → OS ativa/nova → duplicidade na OS → peças → comentário → baixa (ou conferência da baixa
+   entrada no estoque **com pedido** (tipo "Pedido"; "Avulsa" só se escolhida na tela) → OS ativa/nova → duplicidade na OS → peças → comentário → baixa (ou conferência da baixa
    automática) → comentário da baixa → conferência → histórico. Cada nota = uma execução; lote = sequência.
 4. Duplicidade e retomada dependem do `ledger` (checkpoint por etapa) + marca `[XML <12 últimos>]` gravada
    nos comentários do ESL. Não mude o formato de `docKey`/`marker` sem migração.

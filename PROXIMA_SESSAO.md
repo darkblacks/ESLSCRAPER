@@ -37,6 +37,8 @@ formulário encontrado). **Nenhum login, nenhuma gravação.**
 
 - A aba XML de Peças agora cria um **Pedido de Compra** (itens do XML) e faz a NF de entrada **"Com Pedido de Compra"**
   (tipo "Pedido"), como a Transmassa lança. Antes criava NF **Avulsa**. Telas mapeadas no topo de `src/estoque.js`.
+- Na tela (Padrões do lote › "Tipo da entrada no estoque") dá para escolher **Avulsa**; o padrão é com pedido.
+  Payload `tipoEntrada: 'pedido' | 'avulsa'`; a retomada usa o tipo gravado no checkpoint (`etapas.entrada.tipo`).
 - O nº da NF de entrada passa a ser o nº do pedido (o ESL preenche e trava); NF/chave/marca ficam no comentário.
 - Se o ESL travar frete/desconto na NF com pedido, o lançamento segue e avisa (passo com ok=false).
 - **Não testado contra o ESL com gravação** (só leitura das telas). Validar com UMA nota em modo real, com autorização.

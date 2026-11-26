@@ -10,7 +10,7 @@ import {
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
 } from './lookups.js';
-import { createPart, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot } from './estoque.js';
+import { createPart, createStorageInvoice, createPurchaseOrder, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot } from './estoque.js';
 import { ctx } from './ui.js';
 import { createServiceOrder, addPartToOrder, openOrdersForVehicle } from './os.js';
 
@@ -283,15 +283,26 @@ export async function lancarPecas(s, payload, { commit }) {
     L.step(key, 'cadastros', { produtos, ok: true });
     for (const it of itens) L.learnPart(onlyDigits(nf.emitente.cnpj), it.cProd, produtos[it.nItem]);
 
-    // 3) Entrada no estoque COM PEDIDO DE COMPRA (tipo "Pedido", como a Transmassa lança — nunca "Avulsa"):
-    //    3a) pedido de compra com os itens do XML → 3b) NF de entrada "Com Pedido de Compra" → 3c) itens na Entrada no Estoque.
+    // 3) Entrada no estoque. Padrão: COM PEDIDO DE COMPRA (tipo "Pedido", como a Transmassa lança);
+    //    "Avulsa" só se escolhida na tela (payload.tipoEntrada = 'avulsa').
+    //    Com pedido: 3a) pedido de compra com os itens do XML → 3b) NF de entrada "Com Pedido de Compra" → 3c) itens na Entrada no Estoque.
     //    O nº da NF de entrada passa a ser o nº do pedido (o ESL preenche e trava); o nº/chave da NF fica no comentário.
     const codigoDe = (pr, it) => (it.acao === 'cadastrar' ? it.novo.code : String(pr.text || '').split(' - ')[0]).trim();
     // padrão (NF, chave, marca de controle) primeiro — nunca é cortado; depois o texto livre do usuário (até 500 caracteres)
     const comentarioEntrada = [`NF ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk, limpaTexto(payload.comentarioEntrada), limpaTexto(payload.comentarioNf)]
       .filter(Boolean).join(' | ');
+    // tipoEntrada: 'pedido' (padrão) ou 'avulsa' (escolhido na tela). Na retomada vale o que já foi gravado.
+    const avulsa = E().entrada?.tipo ? E().entrada.tipo === 'avulsa' : payload.tipoEntrada === 'avulsa';
     let invoiceId = E().entrada?.invoiceId;
-    if (!invoiceId) {
+    if (!invoiceId && avulsa) {
+      ctx(s.page, `NF ${nf.numero} · entrada avulsa · cabeçalho`);
+      invoiceId = await createStorageInvoice(s, {
+        issuerId: fornecedor.id, issuerText: fornecedor.nome, filial, number: nf.numero, date: payload.date, time: payload.time, comments: comentarioEntrada,
+      });
+      L.step(key, 'entrada', { tipo: 'avulsa', invoiceId, itensOk: [] });
+      p('Entrada no estoque', true, `NF de entrada avulsa criada (id ${invoiceId}).`);
+    } else if (!invoiceId) {
+      L.step(key, 'entrada', { tipo: 'pedido' });
       // 3a) pedido de compra
       let pedidoId = E().entrada?.pedidoId;
       if (!pedidoId) {

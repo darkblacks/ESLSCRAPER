@@ -10,10 +10,11 @@ import { useLote, fmt, ls, save, placaFmt } from './useLote.js';
 const props = defineProps({ commitEnabled: Boolean });
 const TIPOS = [['corrective', 'Corretiva'], ['preventive', 'Preventiva'], ['preparation', 'Preparação'], ['damage', 'Avaria'], ['reform', 'Reforma'], ['help', 'Socorro']];
 
-const pad = reactive(ls('lote_pec_padroes', {
-  destino: 'os', filial: '', almoxarifado: null, solicitante: null, setItem: null, grupo: null, duvida: 'conferir',
+const pad = reactive({
+  destino: 'os', tipoEntrada: 'pedido', filial: '', almoxarifado: null, solicitante: null, setItem: null, grupo: null, duvida: 'conferir',
   criarOs: true, filialOs: null, responsavel: '', tipo: 'corrective', oficina: 'outsourced', comentarioOs: '',
-}));
+  ...ls('lote_pec_padroes', {}), // padrões salvos antes desta versão não têm tipoEntrada → fica 'pedido'
+});
 watch(pad, (v) => save('lote_pec_padroes', v), { deep: true });
 const filiais = ref([]);
 const unidades = ref([]);
@@ -120,6 +121,7 @@ function payload(l) {
   const nf = l.p.nf;
   return {
     nf, date: l.p.date, time: l.p.time,
+    tipoEntrada: pad.tipoEntrada === 'avulsa' ? 'avulsa' : 'pedido',
     fornecedor: { id: l.fornecedorSel.id, nome: l.fornecedorSel.text },
     filial: l.filialNf || pad.filial,
     almoxarifado: { id: pad.almoxarifado.id, nome: pad.almoxarifado.text },
@@ -155,7 +157,7 @@ function lancarTudo() {
   const cad = prontas.value.reduce((a, l) => a + novas(l), 0);
   const soEstoque = prontas.value.filter((l) => destino(l) === 'estoque').length;
   const comOs = n - soEstoque;
-  if (!confirm(`Lançar ${n} NF(s) de peças (${fmt(total.value)})?\n\n${cad ? `• cadastrar ${cad} peça(s) nova(s)\n` : ''}• entrada no almoxarifado ${pad.almoxarifado.text} (todas)\n` +
+  if (!confirm(`Lançar ${n} NF(s) de peças (${fmt(total.value)})?\n\n${cad ? `• cadastrar ${cad} peça(s) nova(s)\n` : ''}• entrada no almoxarifado ${pad.almoxarifado.text} (todas), ${pad.tipoEntrada === 'avulsa' ? 'como NF AVULSA' : 'com PEDIDO DE COMPRA'}\n` +
     (comOs ? `• ${comOs} NF(s): aplicar na OS aberta de cada placa${pad.criarOs ? ' (ou criar nova)' : ''} e dar baixa\n` : '') +
     (soEstoque ? `• ${soEstoque} NF(s): só entrada no estoque (sem OS, sem baixa)` : ''))) return;
   lancar(prontas.value, payload);
@@ -185,6 +187,9 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
       <div class="grid">
         <label>O que fazer com as notas
           <select v-model="pad.destino"><option value="os">Entrada + aplicar na OS + baixa</option><option value="estoque">Só entrada no estoque (compra p/ estoque)</option></select>
+        </label>
+        <label>Tipo da entrada no estoque
+          <select v-model="pad.tipoEntrada"><option value="pedido">Com pedido de compra (tipo Pedido)</option><option value="avulsa">Avulsa (sem pedido)</option></select>
         </label>
         <label>Filial (se o XML não indicar)
           <select v-model="pad.filial"><option value="">—</option><option v-for="f in filiais" :key="f.id" :value="f.nome">{{ f.nome }}</option></select>

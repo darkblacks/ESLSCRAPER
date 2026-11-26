@@ -11,7 +11,7 @@
 //                      (busca select2 /purchase/order/products?search[only_available_orders]=true&term=<nº do pedido>).
 //                      O ESL copia fornecedor, filial, nº (= nº do pedido), data e hora do pedido e trava esses campos;
 //                      o comentário continua editável. Itens: aba "Entrada no Estoque" › "Novo Item" (igual à avulsa).
-//  Entrada avulsa:     /storage/invoice/products/new (tipo "Avulsa") — NÃO usada pela automação.
+//  Entrada avulsa:     /storage/invoice/products/new (tipo "Avulsa") — só quando o usuário escolhe "Avulsa" na tela.
 //                      storage_invoice_product[issuer_id*, recipient_id*, number*, emission_at_date*,
 //                      emission_at_time*, comments]  — salvar antes de incluir itens;
 //                      itens: aba "Entrada no Estoque" › "Novo Item" › #movement_modal storage_movement[purchase_product_id*, amount*,
@@ -153,7 +153,7 @@ export async function setStorageInvoiceComments(s, invoiceId, comments) {
   );
 }
 
-/** Cabeçalho da NF de entrada AVULSA (não usada pelo lançamento de XML; a Transmassa lança com pedido). h = { issuerId, issuerText, filial, number, date, time, comments } */
+/** Cabeçalho da NF de entrada AVULSA (opção "Avulsa" da aba XML de Peças; o padrão é com pedido). h = { issuerId, issuerText, filial, number, date, time, comments } */
 export async function createStorageInvoice(s, h) {
   const I = 'storage_invoice_product';
   return withPage(s, async (page) =>
