@@ -8,7 +8,7 @@ import { parseNfe, splitEmissao, condicaoPagamentoDe } from './nfe.js';
 import {
   findPersonByDocument, findPurchaseInvoice, findStorageInvoices, storageInvoiceMovements, withdrawalMovements,
   searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
-  getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder,
+  getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder, searchWarehouses,
 } from './lookups.js';
 import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
 import { ctx } from './ui.js';
@@ -91,6 +91,14 @@ export async function checkPartsDuplicate(s, nf, fornecedorId, { refazer = false
   if (reg?.status === 'concluido' && ent && !reg.etapas.os && !reg.etapas.baixa) {
     const tipo = await tipoEntrada(s, ent);
     if (tipo && /AVULSA/.test(norm(tipo))) out.refazivel = { invoiceId: ent, tipo };
+  }
+  // Já lançada como Pedido, mas o pedido de compra ficou sem Condição de Pagamento (versão antiga) → pode ser corrigida
+  const pedidoReg = reg?.etapas?.entrada?.pedidoId;
+  if (reg?.status === 'concluido' && pedidoReg && !out.refazivel) {
+    const cab = await getPurchaseOrder(s, pedidoReg).catch(() => null);
+    if (cab && !String(cab.condicaoPagamento || '').trim()) {
+      out.corrigivel = { pedidoId: pedidoReg, pedidoNumero: cab.numero, invoiceId: ent || null, comOsOuBaixa: !!(reg.etapas.os || reg.etapas.baixa) };
+    }
   }
   if (refazer && out.refazivel) {
     out.refazer = out.refazivel;
@@ -219,7 +227,7 @@ export async function previewPecas(s, file) {
 
   const faltando = [!nf.numero && 'número', !nf.emitente.cnpj && 'CNPJ do fornecedor', !nf.emissao && 'data de emissão'].filter(Boolean);
   return {
-    arquivo: file.name, ok: true, nf: { ...nf, items: undefined }, itens, fornecedor, filial, duplicidade: dup,
+    arquivo: file.name, ok: true, nf: { ...nf, items: undefined }, itens, fornecedor, filial, duplicidade: dup, pagamento: condicaoPagamentoDe(nf),
     veiculoSugerido, osSugeridas, faltando, ...splitEmissao(nf.emissao),
   };
 }
@@ -284,6 +292,8 @@ export async function lancarPecas(s, payload, { commit, loteId = null }) {
 
   const passos = [];
   const p = (etapa, ok, msg, extra = {}) => passos.push({ etapa, ok, msg, ...extra });
+
+  if (payload.corrigirPedido) return corrigirPedidoLancado(s, payload, { commit });
 
   // 1) Revalida duplicidade do XML
   const nfComItens = { ...nf, items: nf.items || itens.map((i) => ({ quantidade: Number(i.quantidade), valorTotal: Math.round(Number(i.quantidade) * Number(i.valorUnitario) * 100) / 100 })) };
@@ -822,5 +832,123 @@ export async function lancarPecas(s, payload, { commit, loteId = null }) {
   }
   } finally {
     L.unlock(key);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Corrigir pedido de nota JÁ LANÇADA (condição de pagamento em branco) */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Nota lançada como Pedido por uma versão que não preenchia a Condição de Pagamento.
+ * 1) tenta gravar direto no pedido; 2) se o ESL travou o cabeçalho (itens já recebidos): tira os itens da NF de entrada
+ *    (o pedido volta a ficar aberto), grava a condição (e o comentário, se faltar), e vincula os MESMOS itens de novo
+ *    (mesmo almoxarifado e quantidade), conferindo no fim. O plano dos itens fica no histórico (etapa "correcao"), então
+ *    se parar no meio, ao repetir ele termina de vincular o que faltou. Nota com OS/baixa: não mexe (corrigir à mão).
+ */
+export async function corrigirPedidoLancado(s, payload, { commit }) {
+  const { nf } = payload;
+  if (!commit) return { ok: false, error: 'Gravação desativada no backend (ALLOW_COMMIT=false).' };
+  const key = L.docKey({ chave: nf.chave, cnpj: nf.emitente?.cnpj, numero: nf.numero, serie: nf.serie, tipo: 'nfe' });
+  const reg = L.get(key);
+  const passos = [];
+  const p = (etapa, ok, msg) => passos.push({ etapa, ok, msg });
+  const pedidoId = reg?.etapas?.entrada?.pedidoId;
+  const invoiceId = reg?.etapas?.entrada?.invoiceId;
+  if (!reg || reg.status !== 'concluido' || !pedidoId) return { ok: false, etapa: 'correção', error: 'Esta nota não está concluída como Pedido nesta plataforma — nada para corrigir.' };
+  if (reg.etapas.os || reg.etapas.baixa) return { ok: false, etapa: 'correção', error: 'A nota já foi aplicada em OS/baixa: corrija a Condição de Pagamento do pedido no ESL à mão.' };
+  const pag = ['A PRAZO', 'CARTAO CREDITO', 'A VISTA'].includes(String(payload.condicaoPagamento || '').toUpperCase())
+    ? { condicao: String(payload.condicaoPagamento).toUpperCase(), motivo: 'escolhida na tela' }
+    : condicaoPagamentoDe(nf);
+  const mk = L.marker(key);
+  const placaNf = String(nf.placaNoTexto || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
+  const comentarioPadrao = [`${placaNf ? `PLACA ${placaNf} ` : ''}NF: ${nf.numero} série ${nf.serie}`, nf.chave && `Chave ${nf.chave}`, mk].filter(Boolean).join(' | ');
+  L.lock(key);
+  {
+    try {
+      const cab = await getPurchaseOrder(s, pedidoId);
+      const condOk = () => getPurchaseOrder(s, pedidoId).then((c) => String(c.condicaoPagamento || '').trim()).catch(() => '');
+      const comentarioPedido = String(cab.comentario || '').includes(mk) ? null : [comentarioPadrao, String(cab.comentario || '').trim()].filter(Boolean).join(' | ');
+      if (!String(cab.condicaoPagamento || '').trim()) {
+        // 1) direto
+        ctx(s.page, `NF ${nf.numero} · corrigir pedido ${cab.numero}`);
+        const r1 = await updatePurchaseOrderHeader(s, pedidoId, { paymentCondition: pag.condicao, comments: comentarioPedido });
+        if (r1.aplicado && (await condOk())) {
+          p('Pedido de compra', true, `Condição de pagamento ${pag.condicao} gravada no pedido ${cab.numero} (${pag.motivo}).`);
+        } else {
+          // 2) cabeçalho travado: tira os itens da NF de entrada, corrige e vincula de novo
+          if (!invoiceId) throw new Error('Pedido travado e sem NF de entrada registrada — corrija no ESL à mão.');
+          const salvo = reg.etapas.correcao?.plano;
+          const movs = await storageInvoiceMovements(s, invoiceId);
+          const plano = salvo?.length ? salvo : movs.map((m) => ({ codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario, local: m.local }));
+          if (!plano.length) throw new Error('A NF de entrada não tem itens — nada para refazer.');
+          L.step(key, 'correcao', { plano, pedidoId, invoiceId, concluida: false });
+          p('Pedido de compra', true, `Pedido ${cab.numero} travado pelo ESL (itens recebidos): tirando ${movs.length} item(ns) da NF de entrada para corrigir.`);
+          for (const m of movs) {
+            ctx(s.page, `NF ${nf.numero} · corrigir pedido · tira ${m.codigo} da NF de entrada`);
+            await deleteStorageMovement(s, invoiceId, { codigo: m.codigo, quantidade: m.quantidade, valorUnitario: m.valorUnitario });
+          }
+          let erroCab = null;
+          try {
+            const r2 = await updatePurchaseOrderHeader(s, pedidoId, { paymentCondition: pag.condicao, comments: comentarioPedido });
+            if (!r2.aplicado || !(await condOk())) erroCab = r2.motivo || 'o ESL não gravou a condição';
+          } catch (e) {
+            erroCab = e.message;
+          }
+          // vincula de novo SEMPRE (mesmo se o cabeçalho falhou) — a NF de entrada não pode ficar vazia
+          const almox = new Map();
+          const idAlmox = async (nome) => {
+            if (!almox.has(nome)) {
+              const ws = await searchWarehouses(s, nome).catch(() => []);
+              almox.set(nome, ws.find((w) => norm(w.nome) === norm(nome))?.id || payload.almoxarifado?.id || null);
+            }
+            return almox.get(nome);
+          };
+          const doPedido = await purchaseOrderItems(s, pedidoId);
+          const jaNaNf = await storageInvoiceMovements(s, invoiceId);
+          for (const it of plano) {
+            const iJa = jaNaNf.findIndex((x) => norm(x.codigo) === norm(it.codigo) && Math.abs(x.quantidade - it.quantidade) < 0.001);
+            if (iJa >= 0) { jaNaNf.splice(iJa, 1); continue; } // retomada: este já voltou
+            const oi = doPedido.find((x) => norm(x.codigo) === norm(it.codigo) && Math.abs(x.quantidade - it.quantidade) < 0.001 && x.recebido < x.quantidade - 0.0001);
+            const whId = await idAlmox(it.local);
+            if (!oi || !whId) throw new Error(`Não achei ${!oi ? 'o item ' + it.codigo + ' no pedido' : 'o almoxarifado ' + it.local} para vincular de novo — vincule à mão no ESL (NF de entrada id ${invoiceId}).`);
+            ctx(s.page, `NF ${nf.numero} · corrigir pedido · vincula ${it.codigo} de novo`);
+            const r = await linkOrderItemRapido(s, invoiceId, { orderItemId: oi.id, quantidade: it.quantidade, warehouseId: whId });
+            if (!r.ok && !r.talvez) await linkOrderItem(s, invoiceId, { codigo: it.codigo, quantidade: it.quantidade, warehouseId: whId, warehouseText: it.local });
+          }
+          // confere: a NF de entrada tem de novo exatamente os itens do plano
+          let falta = [];
+          for (let t = 0; t < 10; t++) {
+            const agora = await storageInvoiceMovements(s, invoiceId);
+            falta = plano.filter((it) => {
+              const i = agora.findIndex((x) => norm(x.codigo) === norm(it.codigo) && Math.abs(x.quantidade - it.quantidade) < 0.001);
+              return i >= 0 ? (agora.splice(i, 1), false) : true;
+            });
+            if (!falta.length) break;
+            await new Promise((ok) => setTimeout(ok, 1000));
+          }
+          if (falta.length) throw new Error(`Itens que não voltaram para a NF de entrada id ${invoiceId}: ${falta.map((f) => `${f.codigo} ${f.quantidade}`).join(', ')}. Lance a correção de novo para terminar.`);
+          L.step(key, 'correcao', { concluida: true });
+          p('Entrada no estoque', true, `${plano.length} item(ns) vinculados de novo na NF de entrada id ${invoiceId}, conferidos.`);
+          if (erroCab) throw new Error(`Itens de volta na NF, mas a Condição de Pagamento não gravou: ${erroCab}. Preencha "${pag.condicao}" no pedido ${cab.numero} no ESL.`);
+          p('Pedido de compra', true, `Condição de pagamento ${pag.condicao} gravada no pedido ${cab.numero} (${pag.motivo}).`);
+        }
+      } else p('Pedido de compra', true, `O pedido ${cab.numero} já tem condição de pagamento (${cab.condicaoPagamento}).`);
+      // comentário da NF de entrada sem a marca → inclui
+      if (invoiceId) {
+        const atual = String((await apiGet(s, `/storage/invoice/products/${invoiceId}.json`).catch(() => null))?.comments || '').trim();
+        if (!atual.includes(mk)) {
+          await setStorageInvoiceComments(s, invoiceId, [comentarioPadrao, atual].filter(Boolean).join(' | '));
+          p('Entrada no estoque', true, 'Comentário padrão (NF/placa/marca) incluído na NF de entrada.');
+        }
+      }
+      L.step(key, 'entrada', { condicaoPagamento: pag.condicao });
+      return { ok: true, passos, invoiceId, corrigido: true, resumo: `Pedido corrigido: ${pag.condicao}` };
+    } catch (e) {
+      p('Correção', false, e.message);
+      return { ok: false, etapa: 'correção', error: e.message, passos };
+    } finally {
+      L.unlock(key);
+    }
   }
 }
