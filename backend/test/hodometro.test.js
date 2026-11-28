@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kmInteiro, restricaoHodometro } from '../src/hodometro.js';
+import { kmInteiro, restricaoHodometro, acumularRestricoes } from '../src/hodometro.js';
 test('limite mais restritivo de abastecimento e manifesto', () => {
   const r = restricaoHodometro('Hodômetro Atual não pode ser maior que o abastecimento Nº 15059 (Hodômetro: 973406)\nHodômetro Atual não pode ser maior que o manifesto Nº 93248 (Km saída/chegada: 973257)', 980000);
   assert.equal(r.max, 973257);
@@ -30,4 +30,17 @@ test('aceita do que, espaços não separáveis e números formatados', () => {
 });
 test('sem referência numérica não sugere o valor rejeitado', () => {
   assert.equal(restricaoHodometro('Hodômetro inválido',974422).sugestao,null);
+});
+
+test('lê a mensagem do campo sem prefixo e acumula limites da mesma OS', () => {
+  const a = restricaoHodometro('não pode ser maior que o abastecimento Nº 15059 (Hodômetro: 973406)', 974422);
+  const b = restricaoHodometro('não pode ser maior que\no manifesto Nº 93248\n(Km saída/chegada:\n973257)', 973406);
+  assert.equal(a.max,973406);
+  assert.equal(b.max,973257);
+  const os = { placa:'EVO9750', data:'18/11/2026', hora:'14:24' };
+  const r = acumularRestricoes({...a,...os},{...b,...os});
+  assert.equal(r.max,973257);
+  assert.equal(r.sugestao,973257);
+  assert.equal(r.limites.length,2);
+  assert.equal(acumularRestricoes({...a,...os},{...b,...os,data:'19/11/2026'}).limites.length,1);
 });

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as L from './ledger.js';
-import { recuperarRestricao } from './hodometro.js';
+import { recuperarRestricao, acumularRestricoes } from './hodometro.js';
 import { apiGet } from './esl.js';
 import { createClassifier } from './classificacao.js';
 import { parseNfe, splitEmissao, condicaoPagamentoDe } from './nfe.js';
@@ -835,7 +835,9 @@ export async function lancarPecas(s, payload, { commit, loteId = null }) {
     };
   } catch (e) {
     L.log(key, `Erro${e.etapa ? ' em ' + e.etapa : ''}: ${e.message}`);
-    L.finish(key, 'erro', { erro: e.message, hodometroCorrecao: e.hodometroCorrecao || null });
+    const anteriorKm = recuperarRestricao(L.get(key));
+    if (e.hodometroCorrecao) e.hodometroCorrecao = acumularRestricoes(anteriorKm, e.hodometroCorrecao);
+    L.finish(key, 'erro', { erro: e.message, hodometroCorrecao: e.hodometroCorrecao || anteriorKm || null });
     p(e.etapa || 'Execução', false, e.message);
     return { ok: false, etapa: e.etapa || 'execução', error: e.message, passos, itens: itensResumo(), invoiceId: E().entrada?.invoiceId, screenshot: e.screenshot, retomavel: true, precisaConfirmarPeca: e.precisaConfirmarPeca, hodometroCorrecao: e.hodometroCorrecao };
   }

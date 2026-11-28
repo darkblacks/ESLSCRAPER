@@ -1,6 +1,6 @@
 // Aba "XML de Serviços": nota de serviço → serviço(s) lançado(s) numa OS. Não movimenta estoque.
 import * as L from './ledger.js';
-import { recuperarRestricao } from './hodometro.js';
+import { recuperarRestricao, acumularRestricoes } from './hodometro.js';
 import { ctx } from './ui.js';
 import { createClassifier } from './classificacao.js';
 import { parseServiceXml } from './nfse.js';
@@ -215,7 +215,9 @@ export async function lancarServico(s, payload, { commit, loteId = null }) {
     };
   } catch (e) {
     L.log(key, `Erro: ${e.message}`);
-    L.finish(key, 'erro', { erro: e.message, hodometroCorrecao: e.hodometroCorrecao || null });
+    const anteriorKm = recuperarRestricao(L.get(key));
+    if (e.hodometroCorrecao) e.hodometroCorrecao = acumularRestricoes(anteriorKm, e.hodometroCorrecao);
+    L.finish(key, 'erro', { erro: e.message, hodometroCorrecao: e.hodometroCorrecao || anteriorKm || null });
     p(e.etapa || 'Execução', false, e.message);
     return { ok: false, etapa: e.etapa || 'execução', error: e.message, passos, duplicidade: e.duplicidade, screenshot: e.screenshot, retomavel: true, hodometroCorrecao: e.hodometroCorrecao };
   }

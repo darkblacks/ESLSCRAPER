@@ -48,9 +48,13 @@ export async function createServiceOrder(s, os) {
       // Leia também o texto renderizado do formulário, sem fazer outra gravação.
       const body = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
       const visiveis = mensagensHodometro(body);
-      const erros = [...new Set([...(e.formErrors || []), ...visiveis, e.message].filter(Boolean))].join('\n');
+      const campo = await page.locator('[name="fleet_service_order[current_odometer]"]').evaluate(el => {
+        const group = el.closest('.form-group, .field_with_errors, .has-error');
+        return group?.innerText || '';
+      }).catch(() => '');
+      const erros = [...new Set([...(e.formErrors || []), ...visiveis, campo, e.message].filter(Boolean))].join('\n');
       const correcao = restricaoHodometro(erros, os.odometer);
-      if (correcao) { e.hodometroCorrecao = { ...correcao, placa: os.placa || os.vehicleText || '', data: os.date }; e.etapa = 'Hodômetro da OS'; if (correcao.limites.length) e.message = correcao.mensagem; }
+      if (correcao) { e.hodometroCorrecao = { ...correcao, placa: os.placa || os.vehicleText || '', data: os.date, hora: os.time || '08:00' }; e.etapa = 'Hodômetro da OS'; if (correcao.limites.length) e.message = correcao.mensagem; }
       e.screenshot = await shot(page);
       throw e;
     }

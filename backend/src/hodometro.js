@@ -12,7 +12,9 @@ export function kmInteiro(v) {
 // O ESL pode renderizar o mesmo erro no resumo, no campo ou em várias linhas.
 export function mensagensHodometro(texto) {
   const s = String(texto || '').replace(/[\u00a0\u202f]/g, ' ').replace(/[‐‑–—]/g, '-');
-  const matches = [...s.matchAll(/hod[oô]metro(?:\s+atual)?\s+n[aã]o\s+pode\s+ser\s+(?:maior|menor)\s+(?:do\s+)?que\b[\s\S]*?(?=hod[oô]metro(?:\s+atual)?\s+n[aã]o\s+pode\s+ser|$)/gi)];
+  const field = /n[aã]o\s+pode\s+ser\s+(?:maior|menor)\s+(?:do\s+)?que\s+[^()\n|]*(?:abastecimento|manifesto|hod[oô]metro)[^()]*\(\s*(?:hod[oô]metro|km|quilometragem)[^()]*\)/gi;
+  const normalizado = s.replace(field, (m, offset) => /hod[oô]metro(?:\s+atual)?\s*$/i.test(s.slice(Math.max(0,offset-50),offset)) ? m : 'Hodômetro Atual ' + m);
+  const matches = [...normalizado.matchAll(/hod[oô]metro(?:\s+atual)?\s+n[aã]o\s+pode\s+ser\s+(?:maior|menor)\s+(?:do\s+)?que\b[\s\S]*?(?=hod[oô]metro(?:\s+atual)?\s+n[aã]o\s+pode\s+ser|$)/gi)];
   return [...new Set(matches.map(m => {
     const str = m[0];
     // Limita a captura ao texto do erro, antes do restante do formulário.
@@ -48,4 +50,22 @@ export function recuperarRestricao(reg) {
   if (saved?.limites?.length) return saved;
   const r = restricaoHodometro([saved?.mensagem, reg?.erro].filter(Boolean).join('\n'));
   return r ? { ...saved, ...r } : saved || null;
+}
+
+// Conserve limites da mesma tentativa lógica (mesma placa, data e hora).
+export function acumularRestricoes(anterior, nova) {
+  if (!nova) return anterior || null;
+  const placa = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  // Sem identidade conhecida não combine dados potencialmente de outro veículo/data.
+  if (!anterior || !anterior.placa || !nova.placa || placa(anterior.placa) !== placa(nova.placa) ||
+      !anterior.data || anterior.data !== nova.data || !anterior.hora || anterior.hora !== nova.hora) return nova;
+  const limites = [...new Map([...(anterior.limites || []), ...(nova.limites || [])].map(x => [x.tipo+'|'+x.km+'|'+x.origem, x])).values()];
+  const maxs = limites.filter(x=>x.tipo==='max').map(x=>x.km);
+  const mins = limites.filter(x=>x.tipo==='min').map(x=>x.km);
+  const max = maxs.length ? Math.min(...maxs) : null;
+  const min = mins.length ? Math.max(...mins) : null;
+  const conflitante = min !== null && max !== null && min > max;
+  const n = kmInteiro(nova.sugestao ?? anterior.sugestao);
+  const sugestao = conflitante || !limites.length ? null : n === null ? (max ?? min) : Math.min(max ?? Infinity, Math.max(min ?? 0, n));
+  return { ...nova, limites, max, min, conflitante, sugestao, mensagem: [...new Set([anterior.mensagem,nova.mensagem].filter(Boolean))].join('\n') };
 }
