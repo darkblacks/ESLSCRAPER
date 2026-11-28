@@ -15,6 +15,50 @@ export function validarChave(value) {
   if (Number(chave[43]) !== (resto < 2 ? 0 : 11 - resto)) throw fail('Dígito verificador da chave inválido.', 400);
   return chave;
 }
+
+// Também aceita uma resposta XML aberta diretamente no navegador. Não
+// refaz requisições nem executa chamadas privadas do fornecedor.
+async function baixarArquivo(context, page, link) {
+  let timer;
+  const attached = new Set();
+  let resolveFile, rejectFile;
+  const result = new Promise((resolve, reject) => { resolveFile = resolve; rejectFile = reject; });
+  const onDownload = async (download) => {
+    try {
+      const path = await download.path();
+      if (!path || (await stat(path)).size > 5_000_000) throw fail('XML ausente ou maior que 5 MB.');
+      resolveFile(await readFile(path, 'utf8'));
+    } catch (e) { rejectFile(e); }
+  };
+  const onPage = (p) => {
+    if (attached.has(p)) return;
+    attached.add(p);
+    p.on('download', onDownload);
+  };
+  const onResponse = async (response) => {
+    try {
+      if (!response.ok() || !/^(?:application|text)\/(?:[\w.+-]*\+)?xml(?:;|$)/i.test(response.headers()['content-type'] || '')) return;
+      if (response.request().resourceType() !== 'document') return;
+      if (Number(response.headers()['content-length']) > 5_000_000) return;
+      const body = await response.body();
+      if (body.length <= 5_000_000) resolveFile(body.toString('utf8'));
+    } catch {}
+  };
+  context.on('page', onPage);
+  context.on('response', onResponse);
+  onPage(page);
+  try {
+    timer = setTimeout(() => rejectFile(fail('O Meu DANFE não disponibilizou o XML. Use o upload manual.')), 30000);
+    const [content] = await Promise.all([result, link.click({ timeout: 10000 })]);
+    return content;
+  } finally {
+    clearTimeout(timer);
+    context.off('page', onPage);
+    context.off('response', onResponse);
+    for (const p of attached) p.off('download', onDownload);
+  }
+}
+
 let active = 0;
 export async function buscarXml(value) {
   const chave = validarChave(value);
@@ -26,17 +70,14 @@ export async function buscarXml(value) {
     const context = await browser.newContext({ acceptDownloads: true, locale: 'pt-BR' });
     const page = await context.newPage();
     await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    const input = page.getByRole('textbox', { name: /chave de acesso/i }).or(page.getByPlaceholder(/chave de acesso/i)).or(page.locator('input[maxlength="44"]')).first();
+    const input = page.getByRole('textbox', { name: /chave de acesso/i }).or(page.getByPlaceholder(/chave de acesso/i)).or(page.locator('input[maxlength="44"]')).and(page.locator('input:visible')).first();
     await input.fill(chave, { timeout: 15000 });
     await page.getByText(/^buscar$/i).first().click({ timeout: 15000 });
     const link = page.getByText(/^baixar\s+xml$/i).first();
     await link.waitFor({ state: 'visible', timeout: 60000 });
-    // Captura somente download normal iniciado pelo botão público.
-    const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
-    const [download] = await Promise.all([downloadPromise, link.click({ timeout: 10000 })]);
-    const path = await download.path();
-    if (!path || (await stat(path)).size > 5_000_000) throw fail('XML ausente ou maior que 5 MB.');
-    const content = await readFile(path, 'utf8');
+    // O site informa que o botão pode abrir pop-up. Escuta downloads tanto
+    // na aba original quanto nas novas, sem tentar contornar verificações.
+    const content = await baixarArquivo(context, page, link);
     if (content.length > 5_000_000 || XMLValidator.validate(content) !== true) throw fail('O Meu DANFE não retornou um XML válido.');
     if (/<!DOCTYPE|<!ENTITY/i.test(content)) throw fail('XML com declaração de entidade não permitido.');
     const doc = new XMLParser({ ignoreAttributes: false, parseTagValue: false, removeNSPrefix: true, processEntities: false }).parse(content);
