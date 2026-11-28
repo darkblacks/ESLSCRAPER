@@ -1,5 +1,6 @@
 // Aba "XML de Serviços": nota de serviço → serviço(s) lançado(s) numa OS. Não movimenta estoque.
 import * as L from './ledger.js';
+import { restricaoHodometro } from './hodometro.js';
 import { ctx } from './ui.js';
 import { createClassifier } from './classificacao.js';
 import { parseServiceXml } from './nfse.js';
@@ -15,6 +16,7 @@ const money = (n) => Number(n || 0).toFixed(2);
 export async function checkServiceDuplicate(s, doc, fornecedorId, osId = null) {
   const key = L.docKey({ ...doc, cnpj: doc.prestador.cnpj, tipo: 'nfse' });
   const out = { docKey: key, bloqueado: false, motivos: [], existentes: [], retomavel: null };
+  if (reg && reg.status !== 'concluido' && !reg.etapas?.os?.id) out.hodometroCorrecao = reg.hodometroCorrecao || restricaoHodometro(reg.erro);
 
   const reg = L.get(key);
   if (reg?.status === 'concluido') {
@@ -213,9 +215,9 @@ export async function lancarServico(s, payload, { commit, loteId = null }) {
     };
   } catch (e) {
     L.log(key, `Erro: ${e.message}`);
-    L.finish(key, 'erro', { erro: e.message });
+    L.finish(key, 'erro', { erro: e.message, hodometroCorrecao: e.hodometroCorrecao || null });
     p(e.etapa || 'Execução', false, e.message);
-    return { ok: false, etapa: e.etapa || 'execução', error: e.message, passos, duplicidade: e.duplicidade, screenshot: e.screenshot, retomavel: true };
+    return { ok: false, etapa: e.etapa || 'execução', error: e.message, passos, duplicidade: e.duplicidade, screenshot: e.screenshot, retomavel: true, hodometroCorrecao: e.hodometroCorrecao };
   }
   } finally {
     L.unlock(key);

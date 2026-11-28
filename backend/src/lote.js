@@ -2,6 +2,7 @@
 // A OS pode vir como { modo: 'auto', placa, criarSeNaoHouver, nova: {...} }: o lote procura a OS pendente da placa
 // na hora de lançar — assim várias notas do mesmo veículo caem na mesma OS (a 1ª cria, as seguintes reaproveitam).
 import crypto from 'node:crypto';
+import { kmInteiro } from './hodometro.js';
 import { lancarServico } from './lancamento-servicos.js';
 import { lancarPecas } from './lancamento-pecas.js';
 import * as L from './ledger.js';
@@ -26,8 +27,10 @@ async function resolveOs(s, os) {
   if (!os.criarSeNaoHouver) return { erro: `Placa ${placa} não tem OS aberta.` };
   const v = (await searchVehicles(s, placa)).find((x) => String(x.placa).toUpperCase() === placa);
   if (!v) return { erro: `Veículo ${placa} não encontrado na frota do ESL.` };
+  const km = kmInteiro(os.nova?.odometer ?? v.hodometro);
+  if (km === null) return { erro: 'Informe o hodômetro real da nova OS para ' + placa + '.' };
   return {
-    os: { ...os.nova, modo: 'nova', vehicleId: v.id, vehicleText: v.placa, placa: v.placa, odometer: v.hodometro, confirmarMesmoVeiculo: false },
+    os: { ...os.nova, modo: 'nova', vehicleId: v.id, vehicleText: v.placa, placa: v.placa, odometer: km, confirmarMesmoVeiculo: false },
     info: `nova OS para ${placa}`,
   };
 }
@@ -97,7 +100,7 @@ export function startBatch(s, tipo, notas, { commit }) {
       }
       // 2ª passada: notas que deram erro no meio do caminho (retomáveis) são relançadas sozinhas —
       // a retomada não repete o que já foi gravado. Validação, duplicidade e "pendente" (falta decisão) ficam de fora.
-      const deNovo = notas.map((n, i) => [i, n]).filter(([i]) => job.resultados[i]?.status === 'erro' && job.resultados[i]?.retomavel && !job.resultados[i]?.precisaConfirmar && !job.resultados[i]?.precisaConfirmarPeca);
+      const deNovo = notas.map((n, i) => [i, n]).filter(([i]) => job.resultados[i]?.status === 'erro' && job.resultados[i]?.retomavel && !job.resultados[i]?.precisaConfirmar && !job.resultados[i]?.precisaConfirmarPeca && !job.resultados[i]?.hodometroCorrecao);
       if (deNovo.length && !job.cancelado) {
         job.segundaPassada = deNovo.length;
         await new Promise((ok) => setTimeout(ok, 30_000)); // dá um respiro ao ESL

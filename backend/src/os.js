@@ -6,6 +6,7 @@
 //  modal #outsourced_workshop_service_modal: fleet_set_item_id*, status*, purchase_product_id* (serviço), labor_value, warranty_date, mileage_warranty, comments
 //  modal #workshop_part_modal: purchase_product_id*, quantity*, unitary_value, total_value, warranty_date, mileage_warranty, comments
 //  Obs.: peça lançada na OS NÃO movimenta estoque no ESL (o modal não tem almoxarifado) — baixa é feita em Saída de Peças.
+import { restricaoHodometro } from './hodometro.js';
 import { withPage } from './esl.js';
 import { open, setSelect2, setText, saveMainForm, openTab, openModal, saveModal, brNum, shot } from './ui.js';
 import { searchServiceOrders } from './lookups.js';
@@ -43,6 +44,8 @@ export async function createServiceOrder(s, os) {
     try {
       return await saveMainForm(page, /\/fleet\/service_orders\/(\d+)\/edit/);
     } catch (e) {
+      const correcao = restricaoHodometro((e.formErrors || []).join('\n') || e.message, os.odometer);
+      if (correcao) { e.hodometroCorrecao = { ...correcao, placa: os.placa || os.vehicleText || '', data: os.date }; e.etapa = 'Hodômetro da OS'; }
       e.screenshot = await shot(page);
       throw e;
     }

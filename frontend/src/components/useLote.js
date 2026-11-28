@@ -74,6 +74,7 @@ export function useLote(tipo, previewFn, montarLinha) {
     for (const r of job.value.resultados) {
       const l = linhas.value.find((x) => x.ref === r.ref);
       if (!l) continue;
+      if (r.hodometroCorrecao && l.resultado?.hodometroCorrecao?.mensagem !== r.hodometroCorrecao.mensagem) aplicarRestricaoKm(l, r.hodometroCorrecao);
       l.resultado = r;
       l.estado = { 'na fila': 'na fila', lançando: 'lançando', lançado: 'lançada', pendente: 'conferir', erro: 'erro', cancelado: 'conferir' }[r.status] || l.estado;
       if (r.status === 'lançado' || r.status === 'erro' || r.status === 'pendente') l.erro = r.ok ? '' : r.error;
@@ -94,3 +95,65 @@ export function sugestaoComum(values) {
   return values.every(v => String(v.id) === String(values[0].id)) ? values[0] : null;
 }
 export const opcoesUnicas = values => [...new Map(values.filter(v => v?.id).map(v => [String(v.id),v])).values()];
+
+// Hodômetro individual da nota, não altera o cadastro do veículo.
+const kmTexto = v => {
+  const s = String(v ?? '').trim();
+  return /^\d{1,3}(?:\.\d{3})+$/.test(s) ? s.replace(/\./g,'') : s;
+};
+export function inicialKm(p, placa) {
+  const v = p.veiculoSugerido;
+  const atual = placaFmt(v?.placa) === placaFmt(placa) ? v?.hodometro : null;
+  const anterior = p.duplicidade?.hodometroCorrecao || null;
+  const r = anterior?.placa && placa && placaFmt(anterior.placa) !== placaFmt(placa) ? null : anterior;
+  return { km: kmTexto(r?.sugestao ?? atual), kmAtual: atual ?? null, kmLimites: r, kmConfirmado: !r, kmEditado: false, kmCarregando: false, kmErro: '' };
+}
+export function editarKm(l, value) {
+  l.km = kmTexto(value);
+  l.kmEditado = true;
+  l.kmConfirmado = !l.kmLimites;
+}
+export function aplicarRestricaoKm(l, r) {
+  if (!r) return;
+  l.kmLimites = r;
+  l.km = r.sugestao == null ? l.km : String(r.sugestao);
+  l.kmConfirmado = false;
+  l.kmEditado = false;
+}
+export function pendenciaKm(l) {
+  if (l.kmCarregando) return 'consultando hodômetro';
+  const n = String(l.km ?? '').trim();
+  if (!/^\d+$/.test(n) || !Number.isSafeInteger(Number(n))) return 'hodômetro da nova OS';
+  if (l.kmLimites?.conflitante) return 'limites de hodômetro conflitantes no ESL';
+  if ((l.kmLimites?.min != null && Number(n) < l.kmLimites.min) || (l.kmLimites?.max != null && Number(n) > l.kmLimites.max)) return 'hodômetro fora dos limites do ESL';
+  if (l.kmLimites && !l.kmConfirmado) return 'confirmar hodômetro corrigido';
+  return '';
+}
+export async function consultarKm(l) {
+  const placa = placaFmt(l.placa);
+  if (placa.length !== 7) return;
+  const req = (l.kmReq || 0) + 1;
+  l.kmReq = req;
+  l.kmCarregando = true;
+  l.kmErro = '';
+  try {
+    const v = (await api.vehicles(placa)).find(v => placaFmt(v.placa) === placa);
+    if (l.kmReq !== req || placaFmt(l.placa) !== placa) return;
+    if (!v) { l.kmErro = 'Veículo não encontrado no ESL.'; return; }
+    l.kmAtual = v.hodometro ?? null;
+    if (!l.kmEditado && !l.kmLimites) l.km = kmTexto(v.hodometro);
+  } catch (e) {
+    if (l.kmReq === req) l.kmErro = e.message;
+  } finally {
+    if (l.kmReq === req) l.kmCarregando = false;
+  }
+}
+export function trocarPlacaKm(l, value) {
+  if (placaFmt(l.placa) === placaFmt(value)) return;
+  l.kmReq = (l.kmReq || 0) + 1;
+  const preservar = !placaFmt(l.placa) && l.kmLimites && (!l.kmLimites.placa || placaFmt(l.kmLimites.placa).startsWith(placaFmt(value)));
+  // Conserva a restrição de uma nota reimportada enquanto se completa a placa original.
+  const parcial = l.kmLimites && placaFmt(l.placa).length < 7 && placaFmt(value).startsWith(placaFmt(l.placa)) && (!l.kmLimites.placa || placaFmt(l.kmLimites.placa).startsWith(placaFmt(value)));
+  if (preservar || parcial) { l.kmCarregando = false; return; }
+  Object.assign(l, { km: '', kmAtual: null, kmLimites: null, kmConfirmado: true, kmEditado: false, kmCarregando: false, kmErro: '' });
+}

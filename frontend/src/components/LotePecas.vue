@@ -4,9 +4,10 @@ import BuscaXmlChave from './BuscaXmlChave.vue';
 import { reactive, computed, watch, ref } from 'vue';
 import { api } from '../api.js';
 import SearchPick from './SearchPick.vue';
+import HodometroOs from './HodometroOs.vue';
 import TelasEsl from './TelasEsl.vue';
 import TelaAoVivo from './TelaAoVivo.vue';
-import { useLote, fmt, ls, save, placaFmt, sugestaoComum, opcoesUnicas } from './useLote.js';
+import { useLote, fmt, ls, save, placaFmt, sugestaoComum, opcoesUnicas, inicialKm, trocarPlacaKm, consultarKm, pendenciaKm } from './useLote.js';
 
 const props = defineProps({ commitEnabled: Boolean });
 const TIPOS = [['corrective', 'Corretiva'], ['preventive', 'Preventiva'], ['preparation', 'Preparação'], ['damage', 'Avaria'], ['reform', 'Reforma'], ['help', 'Socorro']];
@@ -50,7 +51,7 @@ function montarLinha(p) {
   const placa = p.veiculoSugerido?.placa || '';
   const unica = osAbertasDe(p, placa);
   return {
-    placa,
+    placa, ...inicialKm(p, placa),
     osSel: unica.length === 1 ? osRef(unica[0]) : null, // 1 OS aberta para a placa → já vem selecionada
     osManual: false, // true depois de "trocar": não re-seleciona sozinho até a placa mudar
     destino: null, // null = padrão do lote
@@ -101,10 +102,12 @@ const escolherOs = (l, id) => {
 };
 /** Placa digitada/editada: descarta a OS anterior e re-seleciona se houver só 1 aberta. */
 function mudarPlaca(l, v) {
+  trocarPlacaKm(l, v);
   l.placa = v;
   l.osSel = null;
   l.osManual = false;
   autoOs(l);
+  if (!l.osSel && placaFmt(v).length === 7) consultarKm(l);
 }
 /** "trocar": libera a placa e a escolha da OS (com 1 OS aberta ela aparece no select para confirmar). */
 function trocarOs(l) {
@@ -128,6 +131,7 @@ function pendencias(l) {
     if (!l.osSel && !placaFmt(l.placa)) f.push('placa ou OS');
     if (!l.osSel && osAbertas(l).length > 1) f.push(`escolher a OS (${osAbertas(l).length} abertas para ${placaFmt(l.placa)})`);
     if (!l.osSel && pad.criarOs && !pad.responsavel) f.push('responsável (padrões)');
+    if (!l.osSel && pad.criarOs && osAbertas(l).length === 0 && pendenciaKm(l)) f.push(pendenciaKm(l));
   }
   const duv = l.itens.filter((it) => !acao(it) || (acao(it) === 'existente' && !it.produtoSel)).length;
   if (duv) f.push(`${duv} peça(s) para conferir`);
@@ -169,6 +173,7 @@ function payload(l) {
       : {
           modo: 'auto', placa: placaFmt(l.placa), criarSeNaoHouver: pad.criarOs,
           nova: {
+            odometer: l.km,
             workshopType: pad.oficina, corporationId: pad.filialOs?.id, corporationText: pad.filialOs?.text, maintenanceType: pad.tipo,
             date: l.p.date, time: l.p.time, oficinaId: l.fornecedorSel.id, oficinaText: l.fornecedorSel.text, receptionResponsible: pad.responsavel,
           },
@@ -224,6 +229,7 @@ function resumo(l) {
   const tipo = r.tipoEntrada ? ` Tipo da NF de entrada no ESL: ${r.tipoEntrada}.` : '';
   if (r.ok) return (r.somenteEntrada ? `Lançada: entrada no estoque feita (NF de entrada id ${r.invoiceId}).` : `Lançada: entrada, OS ${r.osNumero} e baixa feitas (NF de entrada id ${r.invoiceId}).`) + tipo;
   const feito = (r.passos || []).filter((p) => p.ok).map((p) => p.etapa);
+  if (r.hodometroCorrecao) return `${r.invoiceId ? 'Entrada registrada (id ' + r.invoiceId + '). ' : ''}A OS não foi criada: confirme a quilometragem real no campo de hodômetro e lance novamente.`;
   if (r.invoiceId) return `Lançada EM PARTE: a NF de entrada foi criada no ESL (id ${r.invoiceId}), e a automação já tentou corrigir sozinha (repetiu os itens e refez a NF), mas faltou o que está em vermelho abaixo. Veja a tela do erro e clique em lançar de novo — o que já está no ESL não é repetido.`;
   if (feito.some((e) => /Cadastro/.test(e))) return 'Não lançada no estoque. Só o cadastro de peça(s) foi feito. Lance de novo depois de corrigir.';
   return 'Não lançada: nada foi gravado no ESL.';
@@ -323,6 +329,7 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                     </select>
                     <span v-else-if="l.osSel" class="block">{{ l.osSel.text }} <a class="link" @click="trocarOs(l)">trocar</a></span>
                     <small v-else class="muted block">{{ placaFmt(l.placa) ? 'sem OS aberta para esta placa' + (pad.criarOs ? ' — cria nova' : '') : 'informe a placa' }}</small>
+                    <HodometroOs v-if="!l.osSel && pad.criarOs && osAbertas(l).length === 0 && placaFmt(l.placa)" :linha="l" />
                   </template>
                 </template>
                 <template v-else>

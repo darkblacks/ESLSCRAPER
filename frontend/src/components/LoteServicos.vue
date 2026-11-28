@@ -3,9 +3,10 @@
 import { reactive, computed, watch, ref } from 'vue';
 import { api } from '../api.js';
 import SearchPick from './SearchPick.vue';
+import HodometroOs from './HodometroOs.vue';
 import TelasEsl from './TelasEsl.vue';
 import TelaAoVivo from './TelaAoVivo.vue';
-import { useLote, fmt, ls, save, placaFmt, sugestaoComum, opcoesUnicas } from './useLote.js';
+import { useLote, fmt, ls, save, placaFmt, sugestaoComum, opcoesUnicas, inicialKm, trocarPlacaKm, consultarKm, pendenciaKm } from './useLote.js';
 
 const props = defineProps({ commitEnabled: Boolean });
 const STATUS = [['fixed', 'C - Consertou/Completou'], ['cleaned', 'L - Lavou/Limpou'], ['regulated', 'R - Regulou/Reparou'], ['changed', 'T - Trocou'], ['verified', 'V - Verificou']];
@@ -28,7 +29,7 @@ function montarLinha(p) {
   const placa = p.veiculoSugerido?.placa || '';
   const unica = osAbertasDe(p, placa);
   return {
-    placa,
+    placa, ...inicialKm(p, placa),
     // OS citada no texto da nota; senão, a única OS aberta da placa
     osSel: osTexto ? osRef(osTexto) : unica.length === 1 ? osRef(unica[0]) : null,
     osManual: false, // true depois de "trocar": não re-seleciona sozinho até a placa mudar
@@ -67,10 +68,12 @@ const escolherOs = (l, id) => {
 };
 /** Placa digitada/editada: descarta a OS anterior e re-seleciona se houver só 1 aberta. */
 function mudarPlaca(l, v) {
+  trocarPlacaKm(l, v);
   l.placa = v;
   l.osSel = null;
   l.osManual = false;
   autoOs(l);
+  if (!l.osSel && placaFmt(v).length === 7) consultarKm(l);
 }
 /** "trocar": libera a placa e a escolha da OS (com 1 OS aberta ela aparece no select para confirmar). */
 function trocarOs(l) {
@@ -94,6 +97,7 @@ function pendencias(l) {
   if (!l.osSel && !placaFmt(l.placa)) f.push('placa ou OS');
   if (!l.osSel && osAbertas(l).length > 1) f.push(`escolher a OS (${osAbertas(l).length} abertas para ${placaFmt(l.placa)})`);
   if (!l.osSel && pad.criarOs && (!pad.responsavel || !pad.filial)) f.push('filial/responsável (padrões)');
+  if (!l.osSel && pad.criarOs && osAbertas(l).length === 0 && pendenciaKm(l)) f.push(pendenciaKm(l));
   const e = efetivo(l);
   if (!e.setItem) f.push('item do conjunto');
   if (!e.produto) f.push('serviço do catálogo');
@@ -115,6 +119,7 @@ function payload(l) {
       : {
           modo: 'auto', placa: placaFmt(l.placa), criarSeNaoHouver: pad.criarOs,
           nova: {
+            odometer: l.km,
             corporationId: pad.filial?.id, corporationText: pad.filial?.text, maintenanceType: pad.tipo, date: d.date, time: d.time,
             receptionResponsible: pad.responsavel, description: `Serviços - ${l.fornecedorSel.text}`,
           },
@@ -182,6 +187,7 @@ const estado = (l) => (l.estado === 'conferir' && !pendencias(l).length ? ['read
                   </select>
                   <span v-else-if="l.osSel" class="block">{{ l.osSel.text }} <a class="link" @click="trocarOs(l)">trocar</a></span>
                   <small v-else class="muted block">{{ placaFmt(l.placa) ? 'sem OS aberta para esta placa' + (pad.criarOs ? ' — cria nova' : '') : 'informe a placa' }}</small>
+                    <HodometroOs v-if="!l.osSel && pad.criarOs && osAbertas(l).length === 0 && placaFmt(l.placa)" :linha="l" />
                 </template>
                 <span v-else>{{ l.resultado?.osNumero ? 'OS ' + l.resultado.osNumero : l.placa }}</span>
               </td>

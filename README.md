@@ -203,3 +203,7 @@ Nas abas de peças e manutenção, informe a chave de 44 dígitos de uma NF-e mo
 ### Sugestões de catálogo pelo XML
 
 A leitura de peças e serviços pesquisa descrições e categorias no catálogo ESL. Correspondências claras são pré-selecionadas por item/nota; alternativas ficam no menu. Em lotes homogêneos o padrão exibe a sugestão comum, sem persistir automaticamente a classificação. Padrões manuais continuam como fallback e as escolhas por item/nota podem ser alteradas. Nenhum registro é criado durante a classificação.
+
+### Hodômetro da nova OS
+
+Nas abas de peças e serviços, o hodômetro do cadastro do veículo é pré-preenchido e pode ser editado por nota. Para OS retroativas, se o ESL rejeitar a leitura por abastecimento/manifesto, o lote não repete automaticamente a nota: apresenta os limites informados pelo ESL e pede confirmação da quilometragem real antes da retomada. O limite sugerido não comprova a leitura na data. A entrada já registrada é retomada pelo histórico existente.
