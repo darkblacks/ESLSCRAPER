@@ -9,21 +9,43 @@ export function kmInteiro(v) {
   const n = Number(s);
   return Number.isSafeInteger(n) ? n : null;
 }
+// O ESL pode renderizar o mesmo erro no resumo, no campo ou em várias linhas.
+export function mensagensHodometro(texto) {
+  const s = String(texto || '').replace(/[\u00a0\u202f]/g, ' ').replace(/[‐‑–—]/g, '-');
+  const matches = [...s.matchAll(/hod[oô]metro(?:\s+atual)?\s+n[aã]o\s+pode\s+ser\s+(?:maior|menor)\s+(?:do\s+)?que\b[\s\S]*?(?=hod[oô]metro(?:\s+atual)?\s+n[aã]o\s+pode\s+ser|$)/gi)];
+  return [...new Set(matches.map(m => {
+    const str = m[0];
+    // Limita a captura ao texto do erro, antes do restante do formulário.
+    const end = str.search(/\(\s*(?:hod[oô]metro|km|quilometragem)[^()]*\)/i);
+    if (end >= 0) return str.slice(0, str.indexOf(')',end)+1).replace(/\s+/g,' ').trim();
+    return str.split(/\n|\|/)[0].trim().slice(0,400);
+  }).filter(Boolean))];
+}
 export function restricaoHodometro(texto, atual = null) {
   const raw = String(texto || '');
+  const msgs = mensagensHodometro(raw);
   const limites = [];
-  const re = /hod[oô]metro\s+atual\s+n[aã]o\s+pode\s+ser\s+(maior|menor)\s+que\s+([^(\n|]+)\(\s*(?:hod[oô]metro|km(?:\s+sa[ií]da\/chegada)?)\s*:\s*([\d.,]+)\s*\)/gi;
-  for (const m of raw.matchAll(re)) {
-    const km = kmInteiro(m[3]);
-    if (km !== null) limites.push({ tipo: m[1].toLowerCase() === 'maior' ? 'max' : 'min', km, origem: m[2].trim() });
+  for (const msg of msgs) {
+    const d = msg.match(/\b(maior|menor)\s+(?:do\s+)?que\s+(.+?)\s*\(\s*(?:hod[oô]metro|km|quilometragem)[^():\d]*[:=]?\s*([\d][\d.,]*)(?:\s*km)?\s*\)/i);
+    if (!d) continue;
+    const km = kmInteiro(d[3]);
+    if (km !== null) limites.push({ tipo: d[1].toLowerCase() === 'maior' ? 'max' : 'min', km, origem: d[2].trim() });
   }
-  if (!limites.length && !/hod[oô]metro|quilometragem/i.test(raw)) return null;
-  const maxs = limites.filter(x => x.tipo === 'max').map(x => x.km);
-  const mins = limites.filter(x => x.tipo === 'min').map(x => x.km);
+  if (!limites.length && !msgs.length && !/hod[oô]metro|quilometragem/i.test(raw)) return null;
+  const unicos = [...new Map(limites.map(x => [x.tipo+'|'+x.km+'|'+x.origem,x])).values()];
+  const maxs = unicos.filter(x => x.tipo === 'max').map(x => x.km);
+  const mins = unicos.filter(x => x.tipo === 'min').map(x => x.km);
   const max = maxs.length ? Math.min(...maxs) : null;
   const min = mins.length ? Math.max(...mins) : null;
   const n = kmInteiro(atual);
   const conflitante = min !== null && max !== null && min > max;
-  const sugestao = conflitante || !limites.length ? null : n === null ? (max ?? min) : Math.min(max ?? Infinity, Math.max(min ?? 0, n));
-  return { limites, min, max, sugestao, conflitante, mensagem: raw };
+  const sugestao = conflitante || !unicos.length ? null : n === null ? (max ?? min) : Math.min(max ?? Infinity, Math.max(min ?? 0, n));
+  return { limites: unicos, min, max, sugestao, conflitante, mensagem: msgs.length ? msgs.join('\n') : raw.slice(0,1500) };
+}
+// Reinterpreta erros antigos que foram armazenados sem limites numéricos.
+export function recuperarRestricao(reg) {
+  const saved = reg?.hodometroCorrecao;
+  if (saved?.limites?.length) return saved;
+  const r = restricaoHodometro([saved?.mensagem, reg?.erro].filter(Boolean).join('\n'));
+  return r ? { ...saved, ...r } : saved || null;
 }

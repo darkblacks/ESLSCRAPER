@@ -6,7 +6,7 @@
 //  modal #outsourced_workshop_service_modal: fleet_set_item_id*, status*, purchase_product_id* (serviço), labor_value, warranty_date, mileage_warranty, comments
 //  modal #workshop_part_modal: purchase_product_id*, quantity*, unitary_value, total_value, warranty_date, mileage_warranty, comments
 //  Obs.: peça lançada na OS NÃO movimenta estoque no ESL (o modal não tem almoxarifado) — baixa é feita em Saída de Peças.
-import { restricaoHodometro } from './hodometro.js';
+import { restricaoHodometro, mensagensHodometro } from './hodometro.js';
 import { withPage } from './esl.js';
 import { open, setSelect2, setText, saveMainForm, openTab, openModal, saveModal, brNum, shot } from './ui.js';
 import { searchServiceOrders } from './lookups.js';
@@ -44,8 +44,13 @@ export async function createServiceOrder(s, os) {
     try {
       return await saveMainForm(page, /\/fleet\/service_orders\/(\d+)\/edit/);
     } catch (e) {
-      const correcao = restricaoHodometro((e.formErrors || []).join('\n') || e.message, os.odometer);
-      if (correcao) { e.hodometroCorrecao = { ...correcao, placa: os.placa || os.vehicleText || '', data: os.date }; e.etapa = 'Hodômetro da OS'; }
+      // O resumo de erros pode não estar entre os seletores genéricos de formErrors.
+      // Leia também o texto renderizado do formulário, sem fazer outra gravação.
+      const body = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+      const visiveis = mensagensHodometro(body);
+      const erros = [...new Set([...(e.formErrors || []), ...visiveis, e.message].filter(Boolean))].join('\n');
+      const correcao = restricaoHodometro(erros, os.odometer);
+      if (correcao) { e.hodometroCorrecao = { ...correcao, placa: os.placa || os.vehicleText || '', data: os.date }; e.etapa = 'Hodômetro da OS'; if (correcao.limites.length) e.message = correcao.mensagem; }
       e.screenshot = await shot(page);
       throw e;
     }

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as L from './ledger.js';
-import { restricaoHodometro } from './hodometro.js';
+import { recuperarRestricao } from './hodometro.js';
 import { apiGet } from './esl.js';
 import { createClassifier } from './classificacao.js';
 import { parseNfe, splitEmissao, condicaoPagamentoDe } from './nfe.js';
@@ -87,7 +87,7 @@ export async function checkPartsDuplicate(s, nf, fornecedorId, { refazer = false
   // NFs de entrada desta plataforma para esta nota (a atual e as anuladas ao refazer como Pedido) não contam como duplicidade
   const own = new Set([reg?.etapas?.entrada?.invoiceId, ...(reg?.anteriores || []).map((a) => a.invoiceId)].filter(Boolean).map(String));
   const out = { docKey: key, bloqueado: false, motivos: [], existentes: [], alertas: [], retomavel: null };
-  if (reg && reg.status !== 'concluido' && !reg.etapas?.os?.id) out.hodometroCorrecao = reg.hodometroCorrecao || restricaoHodometro(reg.erro);
+  if (reg && reg.status !== 'concluido' && !reg.etapas?.os?.id) out.hodometroCorrecao = recuperarRestricao(reg);
 
   // Pode ser refeita como Pedido? (lançada aqui como Avulsa, só entrada no estoque)
   const ent = reg?.etapas?.entrada?.invoiceId;

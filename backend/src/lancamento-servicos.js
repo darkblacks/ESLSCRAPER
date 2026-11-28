@@ -1,6 +1,6 @@
 // Aba "XML de Serviços": nota de serviço → serviço(s) lançado(s) numa OS. Não movimenta estoque.
 import * as L from './ledger.js';
-import { restricaoHodometro } from './hodometro.js';
+import { recuperarRestricao } from './hodometro.js';
 import { ctx } from './ui.js';
 import { createClassifier } from './classificacao.js';
 import { parseServiceXml } from './nfse.js';
@@ -17,7 +17,7 @@ export async function checkServiceDuplicate(s, doc, fornecedorId, osId = null) {
   const key = L.docKey({ ...doc, cnpj: doc.prestador.cnpj, tipo: 'nfse' });
   const reg = L.get(key);
   const out = { docKey: key, bloqueado: false, motivos: [], existentes: [], retomavel: null };
-  if (reg && reg.status !== 'concluido' && !reg.etapas?.os?.id) out.hodometroCorrecao = reg.hodometroCorrecao || restricaoHodometro(reg.erro);
+  if (reg && reg.status !== 'concluido' && !reg.etapas?.os?.id) out.hodometroCorrecao = recuperarRestricao(reg);
 
   if (reg?.status === 'concluido') {
     out.bloqueado = true;
