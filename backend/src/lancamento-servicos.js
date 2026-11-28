@@ -15,10 +15,10 @@ const money = (n) => Number(n || 0).toFixed(2);
 /** Procura o documento em: histórico local, NF de entrada de serviço no ESL e serviços da OS (pela marca). */
 export async function checkServiceDuplicate(s, doc, fornecedorId, osId = null) {
   const key = L.docKey({ ...doc, cnpj: doc.prestador.cnpj, tipo: 'nfse' });
+  const reg = L.get(key);
   const out = { docKey: key, bloqueado: false, motivos: [], existentes: [], retomavel: null };
   if (reg && reg.status !== 'concluido' && !reg.etapas?.os?.id) out.hodometroCorrecao = reg.hodometroCorrecao || restricaoHodometro(reg.erro);
 
-  const reg = L.get(key);
   if (reg?.status === 'concluido') {
     out.bloqueado = true;
     out.motivos.push(`Nota já lançada por esta plataforma em ${new Date(reg.fim).toLocaleString('pt-BR')}.`);
