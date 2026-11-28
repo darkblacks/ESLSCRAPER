@@ -34,6 +34,8 @@ export function rankCatalog(text, candidates, kind) {
     const cat = cats.length === 1 && normalize(label).includes(cats[0]);
     const exact = normalize(label).trim() === input.trim();
     let score = exact ? 100 : overlap * 12 + (overlap === ws.length ? 16 : 0) + (cat ? 20 : 0);
+    if (kind === 'set' && cat && ws.some(w => words.includes(w) && !tokens(cats[0]).includes(w))) score += 18;
+    if (kind === 'service' && overlap >= 2 && overlap === ws.length) score += 12;
     // Um grupo abrangente pode corresponder por categoria inequívoca.
     if (kind === 'group' && cat && ws.length === tokens(cats[0]).length) score = Math.max(score, 65);
     // Conjunto/item só pela categoria: deixa em dúvida se houver opções similares.
