@@ -59,6 +59,46 @@ async function baixarArquivo(context, page, link) {
   }
 }
 
+// O aviso de novidades pode aparecer a cada contexto novo do Chromium.
+export async function fecharAvisoNovidades(page, timeout = 4000) {
+  const depois = page.getByRole('button', { name: /^depois$/i }).and(page.locator(':visible')).first();
+  try {
+    await depois.waitFor({ state: 'visible', timeout });
+  } catch (e) {
+    if (e.name === 'TimeoutError') return false; // aviso opcional
+    throw e;
+  }
+  await depois.click({ timeout: 10000 });
+  await depois.waitFor({ state: 'hidden', timeout: 10000 });
+  return true;
+}
+
+export async function consultarChave(page, chave) {
+  await fecharAvisoNovidades(page);
+  const input = page.getByPlaceholder(/chave de acesso/i)
+    .or(page.getByRole('textbox', { name: /chave de acesso/i }))
+    .or(page.locator('input[maxlength="44"]'))
+    .and(page.locator('input:visible')).first();
+  const buscar = page.getByRole('button', { name: /^buscar$/i })
+    .or(page.getByText(/^buscar$/i)).and(page.locator(':visible')).first();
+  await input.fill(chave, { timeout: 15000 });
+  // Se o anúncio carregou depois do formulário, fecha antes de clicar.
+  await fecharAvisoNovidades(page, 1000);
+  try {
+    await buscar.click({ trial: true, timeout: 5000 });
+  } catch (e) {
+    if (!(await fecharAvisoNovidades(page, 1000))) throw e;
+  }
+  // O trial acima não dispara o formulário; a busca é enviada uma única vez.
+  await buscar.click({ timeout: 15000 });
+  const link = page.getByRole('button', { name: /^baixar\s+xml$/i })
+    .or(page.getByRole('link', { name: /^baixar\s+xml$/i }))
+    .or(page.getByText(/^baixar\s+xml$/i))
+    .and(page.locator(':visible')).first();
+  await link.waitFor({ state: 'visible', timeout: 60000 });
+  return link;
+}
+
 let active = 0;
 export async function buscarXml(value) {
   const chave = validarChave(value);
@@ -70,11 +110,7 @@ export async function buscarXml(value) {
     const context = await browser.newContext({ acceptDownloads: true, locale: 'pt-BR' });
     const page = await context.newPage();
     await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    const input = page.getByRole('textbox', { name: /chave de acesso/i }).or(page.getByPlaceholder(/chave de acesso/i)).or(page.locator('input[maxlength="44"]')).and(page.locator('input:visible')).first();
-    await input.fill(chave, { timeout: 15000 });
-    await page.getByText(/^buscar$/i).first().click({ timeout: 15000 });
-    const link = page.getByText(/^baixar\s+xml$/i).first();
-    await link.waitFor({ state: 'visible', timeout: 60000 });
+    const link = await consultarChave(page, chave);
     // O site informa que o botão pode abrir pop-up. Escuta downloads tanto
     // na aba original quanto nas novas, sem tentar contornar verificações.
     const content = await baixarArquivo(context, page, link);
