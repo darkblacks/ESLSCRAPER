@@ -15,6 +15,7 @@ import { previewPecas, lancarPecas } from './lancamento-pecas.js';
 import { startBatch, getBatch, cancelBatch, getTelas } from './lote.js';
 import * as C from './config.js';
 import { listSessions, shutdown } from './esl.js';
+import { buscarXml } from './meudanfe.js';
 import { rateLimit } from './rate-limit.js';
 import { tiposEntrada } from './estoque.js';
 import { adminPage } from './admin-page.js';
@@ -246,6 +247,11 @@ app.get('/api/lookup/service-orders', ...look((s, q) => LK.searchServiceOrders(s
 app.get('/api/lookup/service-orders/:id', requireSession, wrap(async (req, res) => res.json(await LK.getServiceOrder(req.esl, req.params.id))));
 
 /* ------------- Lançamento automatizado de XML (abas Serviços / Peças) ------------- */
+
+app.post('/api/xml/buscar-chave', requireSession, rateLimit({ janelaMs: 60_000, max: 5 }), wrap(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await buscarXml(req.body?.chave));
+}));
 
 // { file: { name, content } }
 app.post('/api/xml/servicos/preview', requireSession, wrap(async (req, res) => {

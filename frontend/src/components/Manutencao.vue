@@ -1,4 +1,5 @@
 <script setup>
+import BuscaXmlChave from './BuscaXmlChave.vue';
 // Manutenção: XMLs de NF-e de peças → Ordem de Serviço no ESL.
 import { ref, computed } from 'vue';
 import { api } from '../api.js';
@@ -162,6 +163,7 @@ const resumo = computed(() => ({
       <strong>Solte os XMLs das notas aqui</strong> ou clique para escolher
       <small class="muted">cada XML vira uma Ordem de Serviço com as peças da nota</small>
     </label>
+    <BuscaXmlChave @files="readFiles" />
     <p v-if="loading" class="muted">Lendo XMLs e consultando o ESL…</p>
     <p v-if="error" class="msg">{{ error }}</p>
 

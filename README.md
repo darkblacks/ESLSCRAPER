@@ -195,3 +195,7 @@ Como cada sessão é um Chromium, conte ~150–250 MB de RAM por sessão ativa.
    trocar o scraping de tabela por chamadas HTTP diretas com os cookies de `/api/auth/state` (mais rápido).
 2. Fixar os `name` dos campos de OS, Frete e Solicitação de Compra num "modelo" por tela e expor
    endpoints dedicados (`POST /api/os`, `POST /api/fretes`…).
+
+## Buscar XML pela chave de acesso
+
+Nas abas de peças e manutenção, informe a chave de 44 dígitos de uma NF-e modelo 55. O backend consulta a página pública do Meu DANFE em um Chromium separado e, se o download normal estiver disponível, devolve o XML ao fluxo de upload existente. A consulta exige sessão ESL autenticada, valida o dígito verificador e confere a chave do XML retornado. Não grava no ESL automaticamente. Se o site exigir verificação humana ou não oferecer download direto, faça a consulta manual e envie o arquivo. Não utiliza a API paga do fornecedor. Consulte apenas documentos autorizados. A automação depende da interface do site e requer teste real antes de produção.

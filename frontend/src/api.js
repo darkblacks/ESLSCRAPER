@@ -116,6 +116,7 @@ export const api = {
   xmlServicosPreview: (file) => call('POST', '/api/xml/servicos/preview', { file }),
   xmlServicosLancar: (payload) => call('POST', '/api/xml/servicos/lancar', payload),
   tiposEntrada: () => call('GET', '/api/xml/pecas/tipos-entrada'),
+  buscarXmlChave: (chave) => call('POST', '/api/xml/buscar-chave', { chave }),
   xmlPecasPreview: (file) => call('POST', '/api/xml/pecas/preview', { file }),
   xmlPecasLancar: (payload) => call('POST', '/api/xml/pecas/lancar', payload),
   loteStart: (tipo, notas) => call('POST', '/api/xml/lote', { tipo, notas }),

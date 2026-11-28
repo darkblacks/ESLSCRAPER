@@ -1,4 +1,5 @@
 <script setup>
+import BuscaXmlChave from './BuscaXmlChave.vue';
 // Aba "XML de Peças" em lote: várias NF-e → cadastro das peças novas → entrada no estoque → aplicação na OS → baixa.
 import { reactive, computed, watch, ref } from 'vue';
 import { api } from '../api.js';
@@ -279,6 +280,7 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
       <strong>Solte aqui VÁRIOS XMLs de NF-e de PEÇAS</strong>
       <small class="muted">cada nota: cadastro das peças novas → entrada no estoque → aplicação na OS → baixa</small>
     </label>
+    <BuscaXmlChave @files="addFiles" />
     <p v-if="lendo" class="muted">{{ lendo }}</p>
 
     <section v-if="linhas.length" class="card">
