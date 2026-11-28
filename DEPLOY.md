@@ -66,7 +66,8 @@ O que for alterado pelo `/admin` (CORS, gravação, TTL, nova chave) fica em `ba
 
 ## 3. Netlify (frontend — já publicado, não recriar)
 
-Em **Site configuration › Environment variables**:
+Em **Site configuration › Environment variables**: use também **Import from a .env file** com `frontend/netlify.env.example`, preenchendo a chave vigente (inclusive a configuração rotacionada no /admin). Não desative a varredura de segredos globalmente. Se houver falso positivo, restrinja a exceção às variáveis públicas VITE_*.
+
 
 | Variável | Valor |
 |---|---|

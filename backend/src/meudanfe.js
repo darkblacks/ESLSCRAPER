@@ -1,6 +1,6 @@
 // Consulta pública do Meu DANFE. Contexto separado do ESL; não contorna desafios do site.
 import { chromium } from 'playwright';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
 const SITE = 'https://meudanfe.com.br/';
@@ -28,16 +28,18 @@ export async function buscarXml(value) {
     await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const input = page.getByRole('textbox', { name: /chave de acesso/i }).or(page.getByPlaceholder(/chave de acesso/i)).or(page.locator('input[maxlength="44"]')).first();
     await input.fill(chave, { timeout: 15000 });
-    await page.getByText('BUSCAR', { exact: true }).first().click({ timeout: 15000 });
-    const link = page.getByText('Baixar XML', { exact: true }).first();
+    await page.getByText(/^buscar$/i).first().click({ timeout: 15000 });
+    const link = page.getByText(/^baixar\s+xml$/i).first();
     await link.waitFor({ state: 'visible', timeout: 60000 });
     // Captura somente download normal iniciado pelo botão público.
     const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
     const [download] = await Promise.all([downloadPromise, link.click({ timeout: 10000 })]);
     const path = await download.path();
+    if (!path || (await stat(path)).size > 5_000_000) throw fail('XML ausente ou maior que 5 MB.');
     const content = await readFile(path, 'utf8');
     if (content.length > 5_000_000 || XMLValidator.validate(content) !== true) throw fail('O Meu DANFE não retornou um XML válido.');
-    const doc = new XMLParser({ ignoreAttributes: false, parseTagValue: false, removeNSPrefix: true }).parse(content);
+    if (/<!DOCTYPE|<!ENTITY/i.test(content)) throw fail('XML com declaração de entidade não permitido.');
+    const doc = new XMLParser({ ignoreAttributes: false, parseTagValue: false, removeNSPrefix: true, processEntities: false }).parse(content);
     const inf = (doc.nfeProc?.NFe || doc.NFe)?.infNFe;
     if (inf?.['@_Id'] !== 'NFe' + chave) throw fail('O XML retornado não corresponde à chave informada.');
     return { name: chave + '.xml', content };

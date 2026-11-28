@@ -54,7 +54,7 @@ test('rotas exigem X-API-Key', async () => {
 
 test('rotas operacionais exigem sessão ESL (sem_sessao)', async () => {
   const h = { 'X-API-Key': KEY };
-  for (const [m, p] of [['POST', '/api/xml/servicos/preview'], ['POST', '/api/xml/pecas/preview'], ['POST', '/api/xml/servicos/lancar'], ['POST', '/api/xml/pecas/lancar'], ['POST', '/api/xml/lote'], ['GET', '/api/xml/historico'], ['GET', '/api/auth/state'], ['GET', '/api/lookup/vehicles']]) {
+  for (const [m, p] of [['POST', '/api/xml/buscar-chave'], ['POST', '/api/xml/servicos/preview'], ['POST', '/api/xml/pecas/preview'], ['POST', '/api/xml/servicos/lancar'], ['POST', '/api/xml/pecas/lancar'], ['POST', '/api/xml/lote'], ['GET', '/api/xml/historico'], ['GET', '/api/auth/state'], ['GET', '/api/lookup/vehicles']]) {
     const r = m === 'GET' ? await get(p, h) : await post(p, { file: { name: 'a.xml', content: '<x/>' } }, h);
     assert.equal(r.status, 401, `${m} ${p}`);
     assert.equal((await r.json()).code, 'sem_sessao', `${m} ${p}`);
