@@ -106,17 +106,24 @@ export function inicialKm(p, placa) {
   const atual = placaFmt(v?.placa) === placaFmt(placa) ? v?.hodometro : null;
   const anterior = p.duplicidade?.hodometroCorrecao || null;
   const r = anterior?.placa && placa && placaFmt(anterior.placa) !== placaFmt(placa) ? null : anterior;
-  return { km: kmTexto(r?.sugestao ?? atual), kmAtual: atual ?? null, kmLimites: r, kmConfirmado: !r, kmEditado: false, kmCarregando: false, kmErro: '' };
+  return { km: kmTexto(r ? r.sugestao : atual), kmAtual: atual ?? null, kmLimites: r, kmConfirmado: !r, kmEditado: false, kmCarregando: false, kmErro: '' };
 }
 export function editarKm(l, value) {
   l.km = kmTexto(value);
   l.kmEditado = true;
   l.kmConfirmado = !l.kmLimites;
 }
+export function usarKmSugerido(l) {
+  if (l.kmLimites?.sugestao == null) return;
+  l.km = String(l.kmLimites.sugestao);
+  l.kmEditado = false;
+  l.kmConfirmado = false;
+}
 export function aplicarRestricaoKm(l, r) {
   if (!r) return;
   l.kmLimites = r;
-  l.km = r.sugestao == null ? l.km : String(r.sugestao);
+  // Nunca apresenta o valor rejeitado como sugestão quando não há limite numérico.
+  l.km = r.sugestao == null ? '' : String(r.sugestao);
   l.kmConfirmado = false;
   l.kmEditado = false;
 }
