@@ -1,9 +1,10 @@
 // Aba "XML de Serviços": nota de serviço → serviço(s) lançado(s) numa OS. Não movimenta estoque.
 import * as L from './ledger.js';
 import { ctx } from './ui.js';
+import { createClassifier } from './classificacao.js';
 import { parseServiceXml } from './nfse.js';
 import {
-  findPersonByDocument, findStorageInvoices, searchVehicles, searchServiceOrders, getServiceOrder, searchProducts,
+  findPersonByDocument, findStorageInvoices, searchVehicles, searchServiceOrders, getServiceOrder, searchProducts, searchSetItems, searchGroups,
 } from './lookups.js';
 import { createServiceOrder, addServiceToOrder, openOrdersForVehicle, orderScreenshot } from './os.js';
 
@@ -66,12 +67,12 @@ export async function previewServico(s, file) {
     osSugeridas = [...new Map([...osSugeridas, ...daPlaca].map((o) => [o.id, o])).values()];
   }
 
-  // sugestão de serviço do catálogo (Compras › Cadastros › Serviços)
-  const termo = (doc.itens[0]?.descricao || doc.discriminacao || '').replace(/[^\p{L}\s]/gu, ' ').split(/\s+/).filter((w) => w.length > 3).slice(0, 2).join(' ');
-  const servicosSugeridos = termo ? await searchProducts(s, termo, 'service').catch(() => []) : [];
-
-  const aprendido = L.learnedService(doc.prestador.cnpj); // { setItem:{id,text}, produto:{id,text}, status }
-  return { arquivo: file.name, ok: true, doc, fornecedor, duplicidade: dup, veiculoSugerido, osSugeridas, servicosSugeridos, aprendido };
+  // A descrição da nota atual tem prioridade sobre o histórico do fornecedor.
+  const descricao = [...new Set([...(doc.itens || []).map(i => i.descricao), doc.discriminacao].filter(Boolean))].join(' ').slice(0, 2000);
+  const classificar = createClassifier({ setItems: t => searchSetItems(s,t), groups: t => searchGroups(s,t), services: t => searchProducts(s,t,'service') });
+  const [set, service] = await Promise.all([classificar(descricao,'set'), classificar(descricao,'service')]);
+  const aprendido = L.learnedService(doc.prestador.cnpj);
+  return { arquivo: file.name, ok: true, doc, fornecedor, duplicidade: dup, veiculoSugerido, osSugeridas, servicosSugeridos: service.options, classificacao: { set, service }, aprendido };
 }
 
 /**

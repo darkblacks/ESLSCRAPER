@@ -199,3 +199,7 @@ Como cada sessão é um Chromium, conte ~150–250 MB de RAM por sessão ativa.
 ## Buscar XML pela chave de acesso
 
 Nas abas de peças e manutenção, informe a chave de 44 dígitos de uma NF-e modelo 55. O backend consulta a página pública do Meu DANFE em um Chromium separado e, se o download normal estiver disponível, devolve o XML ao fluxo de upload existente. A consulta exige sessão ESL autenticada, valida o dígito verificador e confere a chave do XML retornado. Não grava no ESL automaticamente. Se o site exigir verificação humana ou não oferecer download direto, faça a consulta manual e envie o arquivo. Não utiliza a API paga do fornecedor. Consulte apenas documentos autorizados. A automação depende da interface do site e requer teste real antes de produção.
+
+### Sugestões de catálogo pelo XML
+
+A leitura de peças e serviços pesquisa descrições e categorias no catálogo ESL. Correspondências claras são pré-selecionadas por item/nota; alternativas ficam no menu. Em lotes homogêneos o padrão exibe a sugestão comum, sem persistir automaticamente a classificação. Padrões manuais continuam como fallback e as escolhas por item/nota podem ser alteradas. Nenhum registro é criado durante a classificação.

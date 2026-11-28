@@ -87,3 +87,10 @@ export function useLote(tipo, previewFn, montarLinha) {
 
   return { linhas, lendo, job, addFiles, lancar, cancelar, remover, limpar };
 }
+
+// Só exibe sugestão comum no padrão se TODOS os itens relevantes concordarem.
+export function sugestaoComum(values) {
+  if (!values.length || values.some(v => !v?.id)) return null;
+  return values.every(v => String(v.id) === String(values[0].id)) ? values[0] : null;
+}
+export const opcoesUnicas = values => [...new Map(values.filter(v => v?.id).map(v => [String(v.id),v])).values()];

@@ -6,7 +6,7 @@ import { api } from '../api.js';
 import SearchPick from './SearchPick.vue';
 import TelasEsl from './TelasEsl.vue';
 import TelaAoVivo from './TelaAoVivo.vue';
-import { useLote, fmt, ls, save, placaFmt } from './useLote.js';
+import { useLote, fmt, ls, save, placaFmt, sugestaoComum, opcoesUnicas } from './useLote.js';
 
 const props = defineProps({ commitEnabled: Boolean });
 const TIPOS = [['corrective', 'Corretiva'], ['preventive', 'Preventiva'], ['preparation', 'Preparação'], ['damage', 'Avaria'], ['reform', 'Reforma'], ['help', 'Socorro']];
@@ -62,11 +62,17 @@ function montarLinha(p) {
       acao: it.situacao === 'certo' ? 'existente' : it.situacao === 'nenhum' ? 'cadastrar' : null, // null = dúvida
       produtoSel: it.produto ? { id: it.produto.id, text: it.produto.text } : null,
       opcoes: (it.sugestoes || []).map((s) => ({ id: s.id, text: s.text, sub: `score ${s.score}` })),
-      novo: reactive({ ...it.novo, setItem: null, group: null }),
+      novo: reactive({ ...it.novo, setItem: it.classificacao?.set?.selected || null, group: it.classificacao?.group?.selected || null }),
     })),
   };
 }
 const { linhas, lendo, job, addFiles, lancar, cancelar, remover, limpar } = useLote('pecas', api.xmlPecasPreview, montarLinha);
+
+const novosItens = computed(() => linhas.value.filter(l => l.estado === 'conferir').flatMap(l => (l.itens || []).filter(it => acao(it) === 'cadastrar')));
+const comumSet = computed(() => sugestaoComum(novosItens.value.map(it => it.novo.setItem)));
+const comumGrupo = computed(() => sugestaoComum(novosItens.value.map(it => it.novo.group)));
+const opcoesSet = computed(() => opcoesUnicas(novosItens.value.flatMap(it => it.classificacao?.set?.options || [])));
+const opcoesGrupo = computed(() => opcoesUnicas(novosItens.value.flatMap(it => it.classificacao?.group?.options || [])));
 
 /** Destino efetivo da nota: 'os' (entrada + OS + baixa) ou 'estoque' (só entrada). */
 const destino = (l) => l.destino || pad.destino;
@@ -257,8 +263,8 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
         </label>
         <label>Almoxarifado *<SearchPick v-model="pad.almoxarifado" :search="searchWarehouses" placeholder="ex.: PEÇAS SBC" /></label>
         <label>Solicitante da baixa<SearchPick v-model="pad.solicitante" :search="searchEmployees" placeholder="funcionário" /></label>
-        <label>Peças novas: conjunto e item<SearchPick v-model="pad.setItem" :search="searchSetItems" placeholder="ex.: Diversos - Peças" /></label>
-        <label>Peças novas: grupo<SearchPick v-model="pad.grupo" :search="searchGroups" placeholder="ex.: MECANICA" /></label>
+        <label>Peças novas: conjunto e item<SearchPick  :model-value="pad.setItem || comumSet" @update:model-value="pad.setItem = $event" :options="opcoesSet" :search="searchSetItems" placeholder="ex.: Diversos - Peças" /></label>
+        <label>Peças novas: grupo<SearchPick  :model-value="pad.grupo || comumGrupo" @update:model-value="pad.grupo = $event" :options="opcoesGrupo" :search="searchGroups" placeholder="ex.: MECANICA" /></label>
         <label>Peça com correspondência duvidosa
           <select v-model="pad.duvida"><option value="conferir">deixar para eu conferir</option><option value="cadastrar">cadastrar como nova</option></select>
         </label>
@@ -391,8 +397,9 @@ const SIT = { certo: 'ok', duvida: 'warn', nenhum: 'err' };
                           <label>Código<input v-model="it.novo.code" /></label>
                           <label>Nome<input v-model="it.novo.name" /></label>
                           <label>Unidade<select v-model="it.novo.unitId"><option :value="null">—</option><option v-for="u in unidades" :key="u.id" :value="u.id">{{ u.nome }}</option></select></label>
-                          <label>Conjunto<SearchPick v-model="it.novo.setItem" :search="searchSetItems" :placeholder="pad.setItem?.text || 'padrão'" /></label>
-                          <label>Grupo<SearchPick v-model="it.novo.group" :search="searchGroups" :placeholder="pad.grupo?.text || 'padrão'" /></label>
+                          <small v-if="it.classificacao?.set?.selected || it.classificacao?.group?.selected" class="muted">Sugestão pelo XML — confira antes de lançar.</small>
+                           <label>Conjunto<SearchPick v-model="it.novo.setItem" :options="it.classificacao?.set?.options || []" :search="searchSetItems" :placeholder="pad.setItem?.text || 'padrão'" /></label>
+                          <label>Grupo<SearchPick v-model="it.novo.group" :options="it.classificacao?.group?.options || []" :search="searchGroups" :placeholder="pad.grupo?.text || 'padrão'" /></label>
                         </div>
                       </td>
                     </tr>

@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import SearchPick from './SearchPick.vue';
 import TelasEsl from './TelasEsl.vue';
 import TelaAoVivo from './TelaAoVivo.vue';
-import { useLote, fmt, ls, save, placaFmt } from './useLote.js';
+import { useLote, fmt, ls, save, placaFmt, sugestaoComum, opcoesUnicas } from './useLote.js';
 
 const props = defineProps({ commitEnabled: Boolean });
 const STATUS = [['fixed', 'C - Consertou/Completou'], ['cleaned', 'L - Lavou/Limpou'], ['regulated', 'R - Regulou/Reparou'], ['changed', 'T - Trocou'], ['verified', 'V - Verificou']];
@@ -33,13 +33,18 @@ function montarLinha(p) {
     osSel: osTexto ? osRef(osTexto) : unica.length === 1 ? osRef(unica[0]) : null,
     osManual: false, // true depois de "trocar": não re-seleciona sozinho até a placa mudar
     fornecedorSel: p.fornecedor ? { id: p.fornecedor.id, text: p.fornecedor.nome } : null,
-    setItem: p.aprendido?.setItem || null, // aprendido para este prestador
-    produto: p.aprendido?.produto || null,
+    setItem: p.classificacao?.set?.selected || (!p.classificacao?.set?.options?.length ? p.aprendido?.setItem : null) || null,
+    produto: p.classificacao?.service?.selected || (!p.classificacao?.service?.options?.length ? p.aprendido?.produto : null) || null,
     valor: d.valorServicos,
   };
 }
 const { linhas, lendo, job, addFiles, lancar, cancelar, remover, limpar } = useLote('servicos', api.xmlServicosPreview, montarLinha);
 
+const notasAtivas = computed(() => linhas.value.filter(l => l.estado === 'conferir'));
+const comumSet = computed(() => sugestaoComum(notasAtivas.value.map(l => l.setItem)));
+const comumProduto = computed(() => sugestaoComum(notasAtivas.value.map(l => l.produto)));
+const opcoesSet = computed(() => opcoesUnicas(notasAtivas.value.flatMap(l => l.p?.classificacao?.set?.options || [])));
+const opcoesProduto = computed(() => opcoesUnicas(notasAtivas.value.flatMap(l => l.p?.classificacao?.service?.options || [])));
 const efetivo = (l) => ({ setItem: l.setItem || pad.setItem, produto: l.produto || pad.produto });
 
 /** OS abertas da placa desta nota. Mais de uma → você escolhe antes de lançar. */
@@ -137,8 +142,8 @@ const estado = (l) => (l.estado === 'conferir' && !pendencias(l).length ? ['read
     <section class="card">
       <h3>Padrões do lote <small class="muted">— preencha uma vez; valem para todas as notas (cada prestador também “aprende” o que foi usado da última vez)</small></h3>
       <div class="grid">
-        <label>Item do conjunto padrão<SearchPick v-model="pad.setItem" :search="searchSetItems" placeholder="ex.: Freio - Lona" /></label>
-        <label>Serviço do catálogo padrão<SearchPick v-model="pad.produto" :search="searchServices" placeholder="ex.: MÃO DE OBRA" /></label>
+        <label>Item do conjunto padrão<SearchPick  :model-value="pad.setItem || comumSet" @update:model-value="pad.setItem = $event" :options="opcoesSet" :search="searchSetItems" placeholder="ex.: Freio - Lona" /></label>
+        <label>Serviço do catálogo padrão<SearchPick  :model-value="pad.produto || comumProduto" @update:model-value="pad.produto = $event" :options="opcoesProduto" :search="searchServices" placeholder="ex.: MÃO DE OBRA" /></label>
         <label>Status<select v-model="pad.status"><option v-for="[v, t] in STATUS" :key="v" :value="v">{{ t }}</option></select></label>
         <label class="wide">Comentário (opcional, em todas)<input v-model="pad.comentario" /></label>
         <label class="inline"><input type="checkbox" v-model="pad.criarOs" /> Sem OS aberta para a placa → criar nova OS</label>
@@ -180,7 +185,7 @@ const estado = (l) => (l.estado === 'conferir' && !pendencias(l).length ? ['read
                 </template>
                 <span v-else>{{ l.resultado?.osNumero ? 'OS ' + l.resultado.osNumero : l.placa }}</span>
               </td>
-              <td class="small">{{ efetivo(l).setItem?.text || '—' }}<br />{{ efetivo(l).produto?.text || '—' }}</td>
+              <td class="small">{{ efetivo(l).setItem?.text || '—' }}<br />{{ efetivo(l).produto?.text || '—' }}<small v-if="l.p?.classificacao?.set?.selected || l.p?.classificacao?.service?.selected" class="muted block">Sugestão pelo XML — confira</small></td>
               <td>
                 <span class="badge" :class="estado(l)[0]">{{ estado(l)[1] }}</span>
                 <small v-if="l.estado === 'conferir' && pendencias(l).length" class="warnc block">falta: {{ pendencias(l).join(', ') }}</small>
@@ -196,7 +201,7 @@ const estado = (l) => (l.estado === 'conferir' && !pendencias(l).length ? ['read
               <td colspan="7">
                 <div class="grid">
                   <label>Prestador no ESL<SearchPick v-model="l.fornecedorSel" :search="searchPeople" /></label>
-                  <label>Item do conjunto (só esta)<SearchPick v-model="l.setItem" :search="searchSetItems" placeholder="usar padrão" /></label>
+                  <label>Item do conjunto (só esta)<SearchPick v-model="l.setItem" :options="l.p.classificacao?.set?.options || []" :search="searchSetItems" placeholder="usar padrão" /></label>
                   <label>Serviço (só esta)<SearchPick v-model="l.produto" :options="(l.p.servicosSugeridos || []).map((x) => ({ id: x.id, text: x.text }))" :search="searchServices" placeholder="usar padrão" /></label>
                   <label>Valor<input v-model="l.valor" /></label>
                   <label>Nº<input v-model="l.p.doc.numero" /></label>
