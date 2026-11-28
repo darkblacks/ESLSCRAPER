@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as L from './ledger.js';
 import { apiGet } from './esl.js';
+import { createClassifier } from './classificacao.js';
 import { parseNfe, splitEmissao, condicaoPagamentoDe } from './nfe.js';
 import {
   findPersonByDocument, findPurchaseInvoice, findStorageInvoices, storageInvoiceMovements, withdrawalMovements,
-  searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
+  searchSetItems, searchGroups, searchProducts, searchVehicles, searchServiceOrders, getServiceOrder, matchUnit, listFiliais,
   getPurchaseOrder, purchaseOrderItems, findStorageInvoiceByOrder, searchWarehouses,
 } from './lookups.js';
 import { createPart, createStorageInvoice, linkOrderItem, linkOrderItemRapido, createPurchaseOrder, updatePurchaseOrderHeader, addPurchaseOrderItem, createStorageInvoiceFromOrder, setStorageInvoiceComments, addStorageMovement, setStorageInvoiceTotals, deleteStorageMovement, excluirItemEntrada, createWithdrawal, addWithdrawalItem, pageShot, appendStorageInvoiceComment } from './estoque.js';
@@ -208,12 +209,18 @@ export async function previewPecas(s, file) {
     filial = fil.find((f) => norm(f.nome) === norm(dest.nome))?.nome || dest.nome;
   }
 
+  const classificar = createClassifier({ setItems: t => searchSetItems(s,t), groups: t => searchGroups(s,t), services: t => searchProducts(s,t,'service') });
   const itens = [];
   for (const it of nf.items) {
     const m = await matchItem(s, nf.emitente.cnpj, it);
     const unidade = await matchUnit(s, it.unidade).catch(() => null);
+    const descricao = it.nomeLimpo || it.descricao;
+    const classificacao = m.situacao === 'certo' ? null : {
+      set: await classificar(descricao, 'set'),
+      group: await classificar(descricao, 'group', [...new Set(m.sugestoes.filter(p => p.score >= 45).map(p => p.grupo).filter(Boolean))].slice(0,1)),
+    };
     itens.push({
-      ...it, ...m,
+      ...it, ...m, classificacao,
       novo: {
         code: it.cProd, name: it.nomeLimpo.toUpperCase().slice(0, 120), unitId: unidade?.id ?? null, unitText: unidade?.nome ?? it.unidade,
         comments: [it.ncm && `NCM ${it.ncm}`, it.ean && `EAN ${it.ean}`, `Cód. fornecedor ${it.cProd}`].filter(Boolean).join(' · '),
