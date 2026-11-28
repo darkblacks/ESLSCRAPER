@@ -45,7 +45,7 @@ export async function createServiceOrder(s, os) {
       return await saveMainForm(page, /\/fleet\/service_orders\/(\d+)\/edit/);
     } catch (e) {
       const correcao = restricaoHodometro((e.formErrors || []).join('\n') || e.message, os.odometer);
-      if (correcao) { e.hodometroCorrecao = correcao; e.etapa = 'Hodômetro da OS'; }
+      if (correcao) { e.hodometroCorrecao = { ...correcao, placa: os.placa || os.vehicleText || '', data: os.date }; e.etapa = 'Hodômetro da OS'; }
       e.screenshot = await shot(page);
       throw e;
     }

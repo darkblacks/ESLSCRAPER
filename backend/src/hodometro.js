@@ -24,6 +24,6 @@ export function restricaoHodometro(texto, atual = null) {
   const min = mins.length ? Math.max(...mins) : null;
   const n = kmInteiro(atual);
   const conflitante = min !== null && max !== null && min > max;
-  const sugestao = conflitante ? null : n === null ? (max ?? min) : Math.min(max ?? Infinity, Math.max(min ?? 0, n));
+  const sugestao = conflitante || !limites.length ? null : n === null ? (max ?? min) : Math.min(max ?? Infinity, Math.max(min ?? 0, n));
   return { limites, min, max, sugestao, conflitante, mensagem: raw };
 }

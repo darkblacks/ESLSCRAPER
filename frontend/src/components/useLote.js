@@ -104,11 +104,12 @@ const kmTexto = v => {
 export function inicialKm(p, placa) {
   const v = p.veiculoSugerido;
   const atual = placaFmt(v?.placa) === placaFmt(placa) ? v?.hodometro : null;
-  const r = p.duplicidade?.hodometroCorrecao || null;
+  const anterior = p.duplicidade?.hodometroCorrecao || null;
+  const r = anterior?.placa && placa && placaFmt(anterior.placa) !== placaFmt(placa) ? null : anterior;
   return { km: kmTexto(r?.sugestao ?? atual), kmAtual: atual ?? null, kmLimites: r, kmConfirmado: !r, kmEditado: false, kmCarregando: false, kmErro: '' };
 }
 export function editarKm(l, value) {
-  l.km = String(value ?? '').replace(/\D/g, '');
+  l.km = kmTexto(value);
   l.kmEditado = true;
   l.kmConfirmado = !l.kmLimites;
 }
@@ -150,5 +151,9 @@ export async function consultarKm(l) {
 export function trocarPlacaKm(l, value) {
   if (placaFmt(l.placa) === placaFmt(value)) return;
   l.kmReq = (l.kmReq || 0) + 1;
+  const preservar = !placaFmt(l.placa) && l.kmLimites && (!l.kmLimites.placa || placaFmt(l.kmLimites.placa).startsWith(placaFmt(value)));
+  // Conserva a restrição de uma nota reimportada enquanto se completa a placa original.
+  const parcial = l.kmLimites && placaFmt(l.placa).length < 7 && placaFmt(value).startsWith(placaFmt(l.placa)) && (!l.kmLimites.placa || placaFmt(l.kmLimites.placa).startsWith(placaFmt(value)));
+  if (preservar || parcial) { l.kmCarregando = false; return; }
   Object.assign(l, { km: '', kmAtual: null, kmLimites: null, kmConfirmado: true, kmEditado: false, kmCarregando: false, kmErro: '' });
 }
